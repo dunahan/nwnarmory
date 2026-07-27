@@ -32,8 +32,17 @@ Building upon the original v1.2 logic (which introduced absolute translation, mi
 
 ## 🛠️ Usage
 
-Installation is simple. Once compiled, you can run the binary directly via your terminal:
+Installation is simple. You can download the latest [release](https://github.com/dunahan/nwnarmory/releases/latest) or compile it yourself, afterwards you can run the binary directly via your terminal.
 
+- Compile it yourself (Rust must be installed):
+```bash
+git clone https://github.com/dunahan/nwnarmory.git
+cd nwnarmory
+cargo build --release
+```
+You*ll find the binaries under target/release/.
+
+- Execution of nwnarmory
 ```bash
 nwnarmory <transforms.ini> <source_file_or_folder> <target_folder>
 
