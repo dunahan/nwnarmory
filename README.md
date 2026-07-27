@@ -46,7 +46,7 @@ nwnarmory NWNArmory.ini pmh0_chest001.mdl ./created
 
 ## ⚠️ Important Prerequisites
 
-*   **ASCII Format Required:** NWNArmory strictly processes ASCII model files. If your base models are in binary format, you must decompile them into ASCII format (for example, using a tool like NWNMdlComp) before running them through this utility.
+*   **ASCII Format Required:** NWNArmory strictly processes ASCII model files. If your base models are in binary format, you must decompile them into ASCII format (for example, using a tool like [CleanmodelsEE](https://github.com/plenarius/cleanmodels/tree/v4-go-rewrite) or NWNMdlComp) before running them through this utility.
 
 ## ⚙️ The INI File Format & Parameters
 
