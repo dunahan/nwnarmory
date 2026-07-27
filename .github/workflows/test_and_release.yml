@@ -1,0 +1,136 @@
+name: Rust Multi-Platform CI & Release
+
+on:
+  # Triggers the workflow (tests only) on every new or updated pull request
+  pull_request:
+    branches: [ "main" ]
+  # Triggers the workflow (tests + release) on every push/merge directly to the main branch
+  push:
+    branches: [ "main" ]
+  # Allows manual triggering via the GitHub interface
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # JOB 1: Testing
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v7
+
+    - name: Install the Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Enable Rust cache
+      uses: swatinem/rust-cache@v2
+
+    - name: Run tests
+      run: cargo test --verbose
+
+  # JOB 2: Checks the Cargo.toml version AND extracts the changelog
+  check-version:
+    name: Check Version & Changelog
+    needs: test
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      is_new: ${{ steps.check_tag.outputs.is_new }}
+      notes: ${{ steps.changelog.outputs.notes }}   # Saves Changelog text
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Read version
+      id: extract
+      run: |
+        VERSION=$(grep -m 1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+        echo "Found version: $VERSION"
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Check if Tag is already existing
+      id: check_tag
+      run: |
+        if git show-ref --tags "v${{ steps.extract.outputs.version }}" --quiet; then
+          echo "Tag v${{ steps.extract.outputs.version }} is already existing, so no new release needed."
+          echo "is_new=false" >> $GITHUB_OUTPUT
+        else
+          echo "Tag v${{ steps.extract.outputs.version }} is newer. Release will be checked in."
+          echo "is_new=true" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Extract changelog for release notes
+      id: changelog
+      if: steps.check_tag.outputs.is_new == 'true'
+      run: |
+        VERSION="${{ steps.extract.outputs.version }}"
+        
+        awk "/^## $VERSION/{flag=1; next} /^## /{flag=0} flag" CHANGELOG.md > release_notes.txt
+        
+        EOF=$(openssl rand -hex 8)
+        echo "notes<<$EOF" >> $GITHUB_OUTPUT
+        cat release_notes.txt >> $GITHUB_OUTPUT
+        echo "$EOF" >> $GITHUB_OUTPUT
+
+  # JOB 3: Build & Release
+  release:
+    name: Build Release for ${{ matrix.os }}
+    needs: check-version
+    if: needs.check-version.outputs.is_new == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: aurora-hak-explorer
+            asset_name: aurora-hak-explorer-linux.tar.gz
+          - os: windows-latest
+            artifact_name: aurora-hak-explorer.exe
+            asset_name: aurora-hak-explorer-windows.zip
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v7
+
+    - name: Install the Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Enable Rust cache
+      uses: swatinem/rust-cache@v2
+
+    - name: Create release build
+      run: cargo build --release
+
+    - name: Packaging (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        Compress-Archive -Path target/release/${{ matrix.artifact_name }} -DestinationPath ./${{ matrix.asset_name }}
+
+    - name: Packaging (Linux)
+      if: matrix.os != 'windows-latest'
+      run: |
+        tar -czf ./${{ matrix.asset_name }} -C target/release ${{ matrix.artifact_name }}
+
+    - name: Automatically create a GitHub release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: "v${{ needs.check-version.outputs.version }}"
+        name: "Release v${{ needs.check-version.outputs.version }}"
+        body: ${{ needs.check-version.outputs.notes }} 
+        files: ./${{ matrix.asset_name }}
+        generate_release_notes: true 
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
