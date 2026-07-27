@@ -8,7 +8,7 @@ NWNArmory is a command-line interface (CLI) tool designed to automatically resiz
 
 ## 🌟 Acknowledgements & Original Developers
 
-**This project is a modern rewrite of the original NWNArmory.** It is of utmost importance to highlight and credit the original creators who made this tool possible. 
+**This project is a modern rewrite of the original [NWNArmory](https://neverwintervault.org/project/nwn1/other/tool/nwnarmory-12-source-code).** It is of utmost importance to highlight and credit the original creators who made this tool possible. The version of this repository used as a base was provided by the Bloodspell Machinima Film Project.
 
 *   **Original Author:** Eligio Sacateca (Rumbles Designs), June 2003.
 *   **Data Compilation:** Based on original data compiled by **Bearthing**.
