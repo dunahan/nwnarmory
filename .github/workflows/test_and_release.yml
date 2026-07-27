@@ -94,11 +94,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: aurora-hak-explorer
-            asset_name: aurora-hak-explorer-linux.tar.gz
+            artifact_name: ${{ github.event.repository.name }}
+            asset_name: ${{ github.event.repository.name }}-linux.tar.gz
           - os: windows-latest
-            artifact_name: aurora-hak-explorer.exe
-            asset_name: aurora-hak-explorer-windows.zip
+            artifact_name: ${{ github.event.repository.name }}.exe
+            asset_name: ${{ github.event.repository.name }}-windows.zip
 
     steps:
     - name: Check out code
