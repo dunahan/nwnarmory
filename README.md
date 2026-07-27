@@ -42,6 +42,42 @@ nwnarmory <transforms.ini> <source_file_or_folder> <target_folder>
 *   `<source_file_or_folder>`: A single `.mdl` file or a directory containing multiple `.mdl` files.
 *   `<target_folder>`: The directory where the transformed models will be saved.
 
+## ⚠️ Important Prerequisites
+
+*   **ASCII Format Required:** NWNArmory strictly processes ASCII model files. If your base models are in binary format, you must decompile them into ASCII format (for example, using a tool like NWNMdlComp) before running them through this utility.
+
+## ⚙️ The INI File Format & Parameters
+
+The transform initialization (`.ini`) file consists of a series of transform groups. Each group requires a match string, a substitute string, and the specific transform definitions. 
+
+### Wildcards (Globbing)
+When defining `match=` and `substitute=` strings, you can use wildcards:
+*   `?` acts as a wildcard matching any single character.
+*   `*` acts as a full glob wildcard matching any number of characters.
+
+### Core Parameters
+*   `match=`: The input source model name must match this string for the group to be appliied.
+*   `substitute=`: Defines how the new file and model name will be generated based on the input name.
+*   `scale=(x, y, z)`: Applies x, y, and z-axis scaling.
+*   `rotate=(x, y, z)`: Applies x, y, and z-axis rotation.
+*   `translate=(x, y, z)`: Applies absolute x, y, and z-axis translation.
+*   `position=(x, y, z)`: Specifies the absolute position parameter (which identifies the pivot point for armor parts).
+*   `minimum=(x, y, z)` & `maximum=(x, y, z)`: If a vertex falls outside these minimum/maximum coordinate bounds, it will not be transformed.
+
+### Texture Map Parameters
+*   `tscale=(x, y)`: Applies x and y-axis scaling to a texture map.
+*   `trotate=(z)`: Applies z-axis rotation to the texture map.
+*   `ttranslate=(x, y)`: Translates the texture map along the x and y axes.
+*   `tminimum=(x, y)` & `tmaximum=(x, y)`: Texture vertices outside these bounds remain untransformed.
+*   `tbitmap=<bitmap name>`: Restricts the transformations exclusively to texture maps using this specific bitmap.
+
+## 📐 Technical Notes & Defaults
+
+*   **Order of Operations:** The transformations are strictly applied in the following sequence: scaling, followed by rotation, followed by translation.
+*   **Origin of Rotation:** Rotations take place exclusively about the origin `(0,0,0)`.
+*   **Default Values:** If a parameter is omitted from a transform group, the tool applies default values resulting in no changes. For example, `scale` defaults to `(1, 1, 1)`, `rotate` and `translate` default to `(0, 0, 0)`. The bounds for `minimum` and `maximum` default to `(-999, -999, -999)` and `(999, 999, 999)` respectively, ensuring all vertices are included by default.
+
+
 ## 📄 License
 
 This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
