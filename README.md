@@ -36,6 +36,8 @@ Installation is simple. Once compiled, you can run the binary directly via your 
 
 ```bash
 nwnarmory <transforms.ini> <source_file_or_folder> <target_folder>
+
+nwnarmory NWNArmory.ini pmh0_chest001.mdl ./created
 ```
 
 *   `<transforms.ini>`: The configuration file containing the scaling and translation matrices (e.g., `standard.ini`).
