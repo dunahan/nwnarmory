@@ -34,14 +34,18 @@ fn main() {
 }
 
 fn print_usage() {
-    eprintln!("Verwendung: nwnarmory <transforms.ini> <quelldatei_oder_ordner> <zielordner>");
+    eprintln!("Verwendung: nwnarmory [--debug|--d] <transforms.ini> <quelldatei_oder_ordner> <zielordner>");
     eprintln!();
     eprintln!("Wendet die in <transforms.ini> definierten Skalierungs-/Rotations-/");
     eprintln!("Translations-Regeln auf ASCII-NWN-.mdl-Dateien an (Rassen-Varianten).");
+    eprintln!("  --debug, --d;  Zeigt beim Laden der INI ignorierte/fehlerhafte Zeilen an.");
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let debug = raw_args.iter().any(|a| a == "--debug" || a == "--d");
+    let args: Vec<String> = raw_args.into_iter().filter(|a| a != "--debug" && a != "--d").collect();
+
     if args.len() != 3 {
         print_usage();
         std::process::exit(2);
@@ -52,7 +56,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let ini_text = fs::read_to_string(ini_path)
         .map_err(|e| format!("kann INI-Datei '{ini_path}' nicht lesen: {e}"))?;
-    let transforms = load_transforms(&ini_text)?;
+    let transforms = load_transforms(&ini_text, debug)?;
     eprintln!("{} Transform-Regeln geladen.", transforms.len());
 
     let src_files = collect_source_files(src_arg)?;
