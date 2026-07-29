@@ -249,6 +249,10 @@ fn parse_scalar(sec: &Section, key: &str, default: &str) -> f32 {
 
 /// Laedt alle [s0]..[sN-1] Sektionen gemaess [Global] nTransforms.
 pub fn load_transforms(ini_text: &str, debug: bool) -> Result<Vec<Transform>, ParseError> {
+    const TRANSFORM_KEYS: &[&str] = &[
+    "match", "substitute", "scale", "rotate", "translate", "minimum", "maximum",
+    "tscale", "trotate", "ttranslate", "tminimum", "tmaximum", "tbitmap", "position",
+    ];
     let sections = parse_ini(ini_text, debug);
     let global = sections
         .get("global")
@@ -262,6 +266,16 @@ pub fn load_transforms(ini_text: &str, debug: bool) -> Result<Vec<Transform>, Pa
     for i in 0..n {
         let key = format!("s{i}");
         let Some(sec) = sections.get(&key) else { continue };
+
+        let unknown: Vec<&String> = sec.keys().filter(|k| !TRANSFORM_KEYS.contains(&k.as_str())).collect();
+        if !unknown.is_empty() {
+            eprintln!("Warnung: [{key}] enthaelt unbekannte Stichworte, ignoriert. Nutze --debug fuer Details.");
+            if debug {
+                for u in &unknown {
+                    eprintln!("  [{key}] {u} = {}", sec[*u]);
+                }
+            }
+        }
 
         let match_pat = get_str(sec, "match", "").to_lowercase();
         if match_pat.is_empty() {
