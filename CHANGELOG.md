@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.3]
+- Documents, comments, and feedback translated into English.
+
 ## [1.2.2]
 
 ### Added
