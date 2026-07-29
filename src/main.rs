@@ -77,7 +77,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or("")
             .to_lowercase();
 
+        let mut matched_any = false;
         for t in &transforms {
+            if !wildcard_match(&t.match_pat, &stem) {
+                continue;
+            }
+            matched_any = true;
             if !wildcard_match(&t.match_pat, &stem) {
                 continue;
             }
@@ -102,7 +107,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             processed += 1;
         }
-    }
+        if !matched_any {
+            eprintln!("Warnung: '{}' passt zu keiner Transform-Regel, uebersprungen. Nutze --debug fuer Details.", src_path.display());
+                if debug {
+                    eprintln!("  Modellname (Stamm): '{stem}'");
+                    eprintln!("  Geladene match-Muster: {}", transforms.iter().map(|t| t.match_pat.as_str()).collect::<Vec<_>>().join(", "));
+                }
+        }
 
     eprintln!(
         "Fertig: {processed} Datei(en) geschrieben, {skipped_collisions} wegen Namenskollision uebersprungen."
