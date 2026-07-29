@@ -404,7 +404,7 @@ match=pm??_belt???
 substitute=??a*
 Scale=(0.72, 0.72, 0.72)
 "#;
-        let transforms = load_transforms(ini).unwrap();
+        let transforms = load_transforms(ini, false).unwrap();
         assert_eq!(transforms.len(), 1);
         assert_eq!(transforms[0].scale, [0.72, 0.72, 0.72]);
     }
