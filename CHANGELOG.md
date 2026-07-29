@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.2]
+
+### Added
+- **Debug mode:** Added a new command-line flag `--debug` (or `--d`) for extended diagnostic and error output.
+- **Warning for unused models:** The tool now issues a warning if a `.mdl` source file does not match any of the loaded transform rules (`match`). In debug mode, the affected model stem and all checked patterns are also listed.
+- **Enhanced INI validation (syntax):** In debug mode, a warning is now issued when malformed lines in the INI file are ignored (e.g., due to a missing `=` sign).
+- **Enhanced INI validation (unknown keys):** A warning is now issued if a transform section contains unknown parameters (keywords), making it easier to spot typos. In debug mode, the affected parameters are explicitly listed.
+
 ## [1.2.1]
 
 | Original Bug | Fix | Verified by |
