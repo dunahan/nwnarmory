@@ -173,12 +173,12 @@ fn rotate_z(v: Vec3, r: f32) -> Vec3 {
 
 type Section = HashMap<String, String>;
 
-pub fn parse_ini(text: &str) -> HashMap<String, Section> {
+pub fn parse_ini(text: &str, debug: bool) -> HashMap<String, Section> {
     let mut sections: HashMap<String, Section> = HashMap::new();
     let mut current = String::from("global");
     sections.entry(current.clone()).or_default();
 
-    for raw_line in text.lines() {
+    for (lineno, raw_line) in text.lines().enumerate() {
         let line = raw_line.trim();
         if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
             continue;
@@ -194,6 +194,15 @@ pub fn parse_ini(text: &str) -> HashMap<String, Section> {
             let key = line[..eq].trim().to_lowercase();
             let val = line[eq + 1..].trim().to_string();
             sections.get_mut(&current).unwrap().insert(key, val);
+        } else if debug {
+            // ponytail: kein echtes Log-System, ein --debug-Flag reicht,
+            // um stillschweigend verschluckte Zeilen (fehlendes '=') sichtbar zu machen
+            eprintln!(
+                "[error] Zeile {} in Sektion [{}] ignoriert (kein '='): {}",
+                lineno + 1,
+                current,
+                line
+            );
         }
     }
     sections
@@ -239,8 +248,12 @@ fn parse_scalar(sec: &Section, key: &str, default: &str) -> f32 {
 }
 
 /// Laedt alle [s0]..[sN-1] Sektionen gemaess [Global] nTransforms.
-pub fn load_transforms(ini_text: &str) -> Result<Vec<Transform>, ParseError> {
-    let sections = parse_ini(ini_text);
+pub fn load_transforms(ini_text: &str, debug: bool) -> Result<Vec<Transform>, ParseError> {
+    const TRANSFORM_KEYS: &[&str] = &[
+    "match", "substitute", "scale", "rotate", "translate", "minimum", "maximum",
+    "tscale", "trotate", "ttranslate", "tminimum", "tmaximum", "tbitmap", "position",
+    ];
+    let sections = parse_ini(ini_text, debug);
     let global = sections
         .get("global")
         .ok_or_else(|| ParseError("keine [Global]-Sektion in der INI gefunden".into()))?;
@@ -253,6 +266,16 @@ pub fn load_transforms(ini_text: &str) -> Result<Vec<Transform>, ParseError> {
     for i in 0..n {
         let key = format!("s{i}");
         let Some(sec) = sections.get(&key) else { continue };
+
+        let unknown: Vec<&String> = sec.keys().filter(|k| !TRANSFORM_KEYS.contains(&k.as_str())).collect();
+        if !unknown.is_empty() {
+            eprintln!("Warnung: [{key}] enthaelt unbekannte Stichworte, ignoriert. Nutze --debug fuer Details.");
+            if debug {
+                for u in &unknown {
+                    eprintln!("  [{key}] {u} = {}", sec[*u]);
+                }
+            }
+        }
 
         let match_pat = get_str(sec, "match", "").to_lowercase();
         if match_pat.is_empty() {
