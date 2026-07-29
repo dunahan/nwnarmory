@@ -1,21 +1,21 @@
-// nwnarmory: CLI-Rewrite von NWNArmory (siehe NWNArmory-Analyse.md).
+// nwnarmory: CLI rewrite of NWNArmory (see NWNArmory_Project_Analysis_EN.md).
 //
-// Behobene Bugs gegenueber dem Original:
-//   1. Keine Kollisionspruefung bei Zieldateien -> stilles Ueberschreiben.
-//      Fix: `written` HashSet trackt Zielpfade in diesem Lauf, bei
-//      Kollision Warnung + Ueberspringen statt Ueberschreiben.
-//   2. CFileException nie befuellt (pError-Parameter fehlte in Open()).
-//      Fix: entfaellt automatisch durch Rusts Result<T, io::Error>.
-//   3. Bei Fehler mitten in der Verarbeitung blieb eine teilweise
-//      geschriebene Zieldatei liegen.
-//      Fix: Schreiben in `<ziel>.tmp`, erst bei Erfolg atomar umbenennen
-//      (rename ist auf demselben Dateisystem atomar).
+// Fixed bugs compared to the original:
+//   1. No collision check for target files -> silent overwrite.
+//      Fix: `written` HashSet tracks target paths in this run; issues a
+//      warning and skips on collision instead of overwriting.
+//   2. CFileException never populated (pError parameter missing in Open()).
+//      Fix: automatically handled by Rust's Result<T, io::Error>.
+//   3. In case of an error mid-processing, a partially written target file
+//      was left behind.
+//      Fix: Write to `<target>.tmp`, atomically rename only on success
+//      (rename is atomic on the same filesystem).
 //
-// Bewusst NICHT behoben / nicht uebernommen (YAGNI, siehe CLAUDE.md /
-// Ponytail-Regeln des begleitenden Repos):
-//   - Nur ASCII-.mdl wird unterstuetzt, wie im Original.
-//   - Keine GUI. Der Zweck (INI waehlen, Quelldateien waehlen, Zielordner
-//     waehlen, "Go") wird 1:1 durch CLI-Argumente abgedeckt.
+// Deliberately NOT fixed / not ported (YAGNI, see CLAUDE.md /
+// Ponytail rules of the accompanying repo):
+//   - Only ASCII .mdl is supported, just like in the original.
+//   - No GUI. The purpose (select INI, select source files, select target folder,
+//     "Go") is mapped 1:1 to CLI arguments.
 
 mod transform;
 
@@ -28,17 +28,17 @@ use transform::{build_substitute, load_transforms, wildcard_match, PositionMode,
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("nwnarmory: Fehler: {e}");
+        eprintln!("nwnarmory: Error: {e}");
         std::process::exit(1);
     }
 }
 
 fn print_usage() {
-    eprintln!("Verwendung: nwnarmory [--debug|--d] <transforms.ini> <quelldatei_oder_ordner> <zielordner>");
+    eprintln!("Usage: nwnarmory [--debug|--d] <transforms.ini> <source_file_or_folder> <target_folder>");
     eprintln!();
-    eprintln!("Wendet die in <transforms.ini> definierten Skalierungs-/Rotations-/");
-    eprintln!("Translations-Regeln auf ASCII-NWN-.mdl-Dateien an (Rassen-Varianten).");
-    eprintln!("  --debug, --d;  Zeigt beim Laden der INI ignorierte/fehlerhafte Zeilen an.");
+    eprintln!("Applies the scaling/rotation/translation rules defined in <transforms.ini>");
+    eprintln!("to ASCII NWN .mdl files (race variants).");
+    eprintln!("  --debug, --d;  Shows ignored/erroneous lines when loading the INI.");
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -55,13 +55,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let dest_dir = PathBuf::from(&args[2]);
 
     let ini_text = fs::read_to_string(ini_path)
-        .map_err(|e| format!("kann INI-Datei '{ini_path}' nicht lesen: {e}"))?;
+        .map_err(|e| format!("cannot read INI file '{ini_path}': {e}"))?;
     let transforms = load_transforms(&ini_text, debug)?;
-    eprintln!("{} Transform-Regeln geladen.", transforms.len());
+    eprintln!("{} transform rules loaded.", transforms.len());
 
     let src_files = collect_source_files(src_arg)?;
     if src_files.is_empty() {
-        eprintln!("Keine .mdl-Quelldateien gefunden unter '{src_arg}'.");
+        eprintln!("No .mdl source files found in '{src_arg}'.");
         return Ok(());
     }
     fs::create_dir_all(&dest_dir)?;
@@ -89,7 +89,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
             if !written.insert(out_path.clone()) {
                 eprintln!(
-                    "Warnung: Zieldatei '{}' wurde in diesem Lauf bereits geschrieben, ueberspringe (aus {}).",
+                    "Warning: Target file '{}' was already written in this run, skipping (from {}).",
                     out_path.display(),
                     src_path.display()
                 );
@@ -97,24 +97,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
 
-            eprintln!("Verarbeite {} -> {}", src_path.display(), out_path.display());
+            eprintln!("Processing {} -> {}", src_path.display(), out_path.display());
             if let Err(e) = process_model(src_path, &stem, &out_name, &out_path, t) {
-                eprintln!("  Fehler bei {}: {e}", src_path.display());
+                eprintln!("  Error in {}: {e}", src_path.display());
                 continue;
             }
             processed += 1;
         }
         if !matched_any {
-            eprintln!("Warnung: '{}' passt zu keiner Transform-Regel, uebersprungen. Nutze --debug fuer Details.", src_path.display());
+            eprintln!("Warning: '{}' does not match any transform rule, skipped. Use --debug for details.", src_path.display());
             if debug {
-                eprintln!("  Modellname (Stamm): '{stem}'");
-                eprintln!("  Geladene match-Muster: {}", transforms.iter().map(|t| t.match_pat.as_str()).collect::<Vec<_>>().join(", "));
+                eprintln!("  Model name (stem): '{stem}'");
+                eprintln!("  Loaded match patterns: {}", transforms.iter().map(|t| t.match_pat.as_str()).collect::<Vec<_>>().join(", "));
             }
         }
     }
 
     eprintln!(
-        "Fertig: {processed} Datei(en) geschrieben, {skipped_collisions} wegen Namenskollision uebersprungen."
+        "Done: {processed} file(s) written, {skipped_collisions} skipped due to name collision."
     );
     Ok(())
 }
@@ -137,8 +137,8 @@ fn collect_source_files(src_arg: &str) -> Result<Vec<PathBuf>, Box<dyn std::erro
     }
 }
 
-/// Verarbeitet eine Quelldatei gegen eine einzelne Transform-Regel und
-/// schreibt das Ergebnis atomar (ueber eine .tmp-Datei) nach `out_path`.
+/// Processes a source file against a single transform rule and
+/// writes the result atomically (via a .tmp file) to `out_path`.
 fn process_model(
     src_path: &Path,
     src_stem: &str,
@@ -154,7 +154,7 @@ fn process_model(
             Ok(())
         }
         Err(e) => {
-            // Bug-Fix ggue. Original: keine halbfertige Datei liegen lassen.
+            // Bugfix compared to original: don't leave a half-finished file behind.
             let _ = fs::remove_file(&tmp_path);
             Err(e)
         }
@@ -230,7 +230,7 @@ fn write_transformed_verts(
 ) -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..n {
         let Some(line) = lines.next() else {
-            return Err("unerwartetes Dateiende in verts-Block".into());
+            return Err("unexpected EOF in verts block".into());
         };
         let line = line?;
         let vals: Vec<f32> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
@@ -256,7 +256,7 @@ fn write_transformed_tverts(
 ) -> Result<(), Box<dyn std::error::Error>> {
     for _ in 0..n {
         let Some(line) = lines.next() else {
-            return Err("unerwartetes Dateiende in tverts-Block".into());
+            return Err("unexpected EOF in tverts block".into());
         };
         let line = line?;
         let vals: Vec<f32> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
@@ -272,8 +272,8 @@ fn write_transformed_tverts(
     Ok(())
 }
 
-/// Case-insensitiver Ersatz aller Vorkommen von `from` durch `to` in `line`
-/// (Ersatz fuer ReplaceNoCase in IO.cpp).
+/// Case-insensitive replacement of all occurrences of `from` by `to` in `line`
+/// (Replacement for ReplaceNoCase in IO.cpp).
 fn replace_no_case(line: &str, from: &str, to: &str) -> String {
     if from.is_empty() {
         return line.to_string();

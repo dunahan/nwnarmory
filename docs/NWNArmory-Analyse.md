@@ -1,106 +1,74 @@
-# NWNArmory – Projektanalyse
+# NWNArmory – Project Analysis
 
-## 1. Was das Programm macht
+## 1. What the Program Does
 
-NWNArmory ist ein Windows-Desktop-Tool (MFC/Visual C++, offenbar aus der NWN-Modding-Ära um 2003)
-zur **automatisierten Größenanpassung von Neverwinter-Nights-Modellen (`.mdl`, ASCII-Format) auf
-andere Spielrassen**. Man hat üblicherweise die Standard-Modelle für einen menschlichen Charakter
-(z. B. Rüstungsteile: Gürtel, Brust, Hals, Becken, Schulter, Bizeps, Unterarm, Hand, Bein, Schienbein,
-Fuß) und möchte daraus automatisch passende Varianten für Halbling, Zwerg, Elf, Gnom und Halbork
-erzeugen – ohne jedes Teil von Hand in 3ds Max zu skalieren.
+NWNArmory is a Windows desktop tool (MFC/Visual C++, apparently from the NWN modding era around 2003) for the **automated resizing of Neverwinter Nights models (`.mdl`, ASCII format) to other playable races**. Typically, one has the standard models for a human character (e.g., armor parts: belt, chest, neck, pelvis, shoulder, bicep, forearm, hand, leg, shin, foot) and wants to automatically generate fitting variants for Halfling, Dwarf, Elf, Gnome, and Half-Orc—without having to scale each part manually in 3ds Max.
 
-Das Tool liest die Quellmodelle textbasiert (ASCII-`.mdl`), wendet pro Körperteil und Rasse fest
-definierte Skalierungs-/Rotations-/Translations-Matrizen auf die Vertex- und Textur-Koordinaten an
-und schreibt das Ergebnis unter einem neuen Dateinamen (Rassen-Suffix) in ein Zielverzeichnis.
+The tool reads the source models in text format (ASCII `.mdl`), applies strictly defined scaling, rotation, and translation matrices to the vertex and texture coordinates per body part and race, and writes the result to a target directory under a new filename (race suffix).
 
-## 2. Architektur-Überblick
+## 2. Architecture Overview
 
-```
-NWNArmory.cpp/.h        → CWinApp-Einstiegspunkt, startet den Hauptdialog
-NWNArmoryDlg.cpp/.h     → Hauptdialog: Dateiauswahl, Zielordner, INI-Datei, "Go"-Button
-BDialog.cpp/.h          → Basis-Dialogklasse mit Hintergrundbild (Tile/Center/Stretch)
-FolderDialog.cpp/.h     → Ordnerauswahl-Dialog (SHBrowseForFolder-Wrapper)
-MyHyperLink.cpp/.h      → Hyperlink-Steuerelement (nur im About-Dialog verwendet)
-ProgressWnd.cpp/.h      → Popup-Fortschrittsfenster während der Verarbeitung
-ShowTransformsDlg.cpp/.h→ Listet alle geladenen Transform-Gruppen zur Kontrolle auf
+```text
+NWNArmory.cpp/.h        → CWinApp entry point, launches the main dialog
+NWNArmoryDlg.cpp/.h     → Main dialog: file selection, target folder, INI file, "Go" button
+BDialog.cpp/.h          → Base dialog class with background image (Tile/Center/Stretch)
+FolderDialog.cpp/.h     → Folder selection dialog (SHBrowseForFolder wrapper)
+MyHyperLink.cpp/.h      → Hyperlink control (only used in the About dialog)
+ProgressWnd.cpp/.h      → Popup progress window during processing
+ShowTransformsDlg.cpp/.h→ Lists all loaded transform groups for inspection
 
-NWNGlobals.cpp/.h       → globales Transform-Array, Logging (CLogFile), Pfad-Hilfsfunktionen
-Transform.cpp/.h        → CTransform: eine "Regel" (Match-Muster + Matrizen) pro INI-Sektion
-Matrix.cpp/.h           → CMatrix: generische, referenzgezählte 4x4/NxM-Matrixklasse
-IO.cpp/.h               → CIO: liest ein Quellmodell, prüft Regel-Treffer, schreibt Zielmodell
-ini2.cpp/.h             → CIni: dünner Wrapper um die Windows-INI-API
+NWNGlobals.cpp/.h       → Global transform array, logging (CLogFile), path helper functions
+Transform.cpp/.h        → CTransform: one "rule" (match pattern + matrices) per INI section
+Matrix.cpp/.h           → CMatrix: generic, reference-counted 4x4/NxM matrix class
+IO.cpp/.h               → CIO: reads a source model, checks for rule matches, writes target model
+ini2.cpp/.h             → CIni: thin wrapper around the Windows INI API
 
-NWNArmory.ini/standard.ini → Konfigurationsdaten: 110 Transform-Sektionen (Rasse × Körperteil)
+NWNArmory.ini/standard.ini → Configuration data: 110 transform sections (Race × Body Part)
 ```
 
-## 3. Ablauf – Schritt für Schritt
+## 3. Execution – Step by Step
 
-1. **Start (`CNWNArmoryApp::InitInstance`)**: öffnet `CNWNArmoryDlg` modal.
-2. **`OnInitDialog`**: lädt beim Start automatisch die Transforms aus der Standard-INI
-   (`LoadTransforms()`), setzt Hintergrundbild, deaktiviert den "Go"-Button.
-3. **Schritt 1 – Transformationsdatei wählen** (`OnBnClickedBtnTransformation`):
-   Der Nutzer kann eine andere `.ini` wählen; `LoadTransforms(pfad)` liest sie neu ein.
+1. **Startup (`CNWNArmoryApp::InitInstance`)**: Opens `CNWNArmoryDlg` modally.
+2. **`OnInitDialog`**: Automatically loads the transforms from the standard INI (`LoadTransforms()`) upon startup, sets the background image, and disables the "Go" button.
+3. **Step 1 – Select Transformation File** (`OnBnClickedBtnTransformation`): The user can select a different `.ini`; `LoadTransforms(path)` reads it anew.
 4. **`LoadTransforms`**:
-   - Liest `[Global] nTransforms` (Anzahl Sektionen, gedeckelt auf `MAXTEMPLATES = 1024`).
-   - Legt `CTransform transform[nTransforms]` neu an (vorheriges Array wird `delete[]`-t).
-   - Für jede Sektion `s0..sN-1`: liest `match`, `substitute`, `scale`, `rotate`, `translate`,
-     `minimum`, `maximum` sowie die Texture-Varianten (`tscale`, `trotate`, `ttranslate`,
-     `tminimum`, `tmaximum`, `tbitmap`) und `position`. Bei Parse-Fehlern (`sscanf`-Count
-     stimmt nicht) wird eine Meldung angezeigt und die Sektion durch Leeren von `match`
-     effektiv deaktiviert (`continue`).
-   - Öffnet/erstellt bei Bedarf die Logdatei (`NWNArmory.Log`).
-5. **Schritt 2 – Quelldateien wählen** (`OnBnClickedBtnSource`): Mehrfachauswahl von `.mdl`-Dateien
-   über einen 32-KB-Puffer (`filebuf[32768]`); Dateinamen werden in `m_SourceFiles`
-   und die Listbox übernommen. Quellverzeichnis wird aus der ersten Datei abgeleitet.
-6. **Schritt 3 – Zielverzeichnis wählen** (`OnBnClickedBtnDestination`): `CFolderDialog`.
-7. **Schritt 4 – "Go!"** (`OnBnClickedBtnGo` → `ProcessSourceFile`):
-   Für **jede** Quelldatei wird **jede** geladene Transform-Regel durchprobiert:
-   - `CIO io(datei, zielverzeichnis)` öffnet die Quelldatei lesend, ermittelt den
-     Basisnamen (klein geschrieben) als `mstrSrcModelName`.
+   - Reads `[Global] nTransforms` (number of sections, capped at `MAXTEMPLATES = 1024`).
+   - Allocates `CTransform transform[nTransforms]` (previous array is deleted via `delete[]`).
+   - For each section `s0..sN-1`: reads `match`, `substitute`, `scale`, `rotate`, `translate`, `minimum`, `maximum` as well as the texture variants (`tscale`, `trotate`, `ttranslate`, `tminimum`, `tmaximum`, `tbitmap`) and `position`. On parsing errors (`sscanf` count mismatch), a message is displayed, and the section is effectively disabled by clearing `match` (`continue`).
+   - Opens/creates the log file (`NWNArmory.Log`) as needed.
+5. **Step 2 – Select Source Files** (`OnBnClickedBtnSource`): Multi-selection of `.mdl` files via a 32 KB buffer (`filebuf[32768]`); filenames are added to `m_SourceFiles` and the list box. The source directory is derived from the first file.
+6. **Step 3 – Select Destination Directory** (`OnBnClickedBtnDestination`): `CFolderDialog`.
+7. **Step 4 – "Go!"** (`OnBnClickedBtnGo` → `ProcessSourceFile`):
+   For **every** source file, **every** loaded transform rule is evaluated:
+   - `CIO io(file, target_directory)` opens the source file for reading and extracts the base name (converted to lowercase) as `mstrSrcModelName`.
    - `io.SetOutFile(transform[i])`:
-     - `doesMatch()` prüft den Dateinamen gegen `match` per **Wildcard-Vergleich**
-       (`wildcmp`, unterstützt `*` und `?`, selbstgeschriebene Implementierung in `IO.cpp`).
-     - Bei Treffer: `doSubstitute()` baut aus `substitute` (ebenfalls mit `?`/`*`-Platzhaltern)
-       den neuen Modellnamen, z. B. `pm01_belt001` + Muster `??a*` → `pm01a_belt001`
-       (die ersten beiden Zeichen bleiben, drittes Zeichen wird durch `a` ersetzt = Halbling-Suffix).
-     - Zieldatei wird angelegt (`CFile::modeCreate|modeWrite`), Ausnahme bei Fehler.
-   - `io.ProcessModel(transform[i])` liest die Quelldatei **zeilenweise** und schreibt sie
-     transformiert in die Zieldatei (siehe Abschnitt 4).
-   - Ein Quellmodell kann so **mehrfach** verarbeitet werden – einmal pro passender Regel
-     (z. B. dieselbe Gürtel-Datei erzeugt Halbling-, Zwerg-, Elf-, Gnom- und Halbork-Varianten,
-     da fünf Sektionen mit demselben `match`-Muster, aber unterschiedlichem `substitute`
-     existieren).
-   - Ein `CProgressWnd` zeigt Fortschritt, erlaubt Abbrechen; Ergebnisse/Fehler werden geloggt
-     und teils per `AfxMessageBox` gemeldet.
+     - `doesMatch()` checks the filename against `match` using a **wildcard comparison** (`wildcmp`, supports `*` and `?`, custom implementation in `IO.cpp`).
+     - On a match: `doSubstitute()` constructs the new model name from `substitute` (also using `?`/`*` placeholders), e.g., `pm01_belt001` + pattern `??a*` → `pm01a_belt001` (the first two characters are kept, the third is replaced by `a` = Halfling suffix).
+     - The target file is created (`CFile::modeCreate|modeWrite`), throwing an exception on error.
+   - `io.ProcessModel(transform[i])` reads the source file **line by line** and writes the transformed data to the target file (see Section 4).
+   - A source model can thus be processed **multiple times**—once for each matching rule (e.g., the same belt file generates Halfling, Dwarf, Elf, Gnome, and Half-Orc variants because five sections exist with the same `match` pattern but different `substitute` strings).
+   - A `CProgressWnd` displays progress and allows cancellation; results/errors are logged and partially reported via `AfxMessageBox`.
 
-## 4. Kernlogik der Modell-Transformation (`CIO::ProcessModel`)
+## 4. Core Logic of Model Transformation (`CIO::ProcessModel`)
 
-Das ASCII-`.mdl`-Format wird zeilenweise per Token-Erkennung (erstes Wort, klein geschrieben)
-interpretiert (siehe auch `nwn-mdl-format_v5.md` im Projekt):
+The ASCII `.mdl` format is interpreted line by line via token recognition (first word, lowercase):
 
-| Zeilentyp        | Verhalten |
-|-------------------|-----------|
-| `verts N`         | liest die folgenden `N` Vertex-Zeilen (`ProcessVerts`/`ProcessVert`), wendet pro Vertex `CMatrix`-Multiplikationen mit Skalierung, Rotation, Translation an (nur wenn der Punkt innerhalb `minimum`/`maximum` liegt, sonst unverändert kopiert) |
-| `tverts N`        | analog für Textur-Koordinaten, mit eigener Skala/Rotation/Translation (`ProcessTverts`/`ProcessTvert`); kann optional auf ein bestimmtes `bitmap` beschränkt werden (`tbitmap`) |
-| `bitmap <name>`   | merkt sich den zuletzt gesehenen Bitmap-Namen (für die `tbitmap`-Prüfung) und ersetzt Modellnamen-Referenzen |
-| `position <x y z>`| transformiert den Pivot-Punkt (`ProcessPosition`), entweder mit denselben Scale/Rotate/Translate-Matrizen oder als absolute Verschiebung (`isMovePos`, wenn `position=(x,y,z)` in der INI gesetzt ist) |
-| `filedependancy`  | wird unverändert kopiert (Max-Dateireferenz, für den Loader irrelevant) |
-| alles andere      | Modellname wird per `ReplaceNoCase` ersetzt, Zeile unverändert übernommen |
+| Line Type | Behavior |
+| :--- | :--- |
+| `verts N` | Reads the following `N` vertex lines (`ProcessVerts`/`ProcessVert`), applies `CMatrix` multiplications for scaling, rotation, and translation per vertex (only if the point is within `minimum`/`maximum`, otherwise copied unchanged). |
+| `tverts N` | Analogous for texture coordinates, with its own scale/rotation/translation (`ProcessTverts`/`ProcessTvert`); can optionally be restricted to a specific `bitmap` (`tbitmap`). |
+| `bitmap <name>` | Remembers the last seen bitmap name (for the `tbitmap` check) and replaces model name references. |
+| `position <x y z>` | Transforms the pivot point (`ProcessPosition`), either using the same Scale/Rotate/Translate matrices or as an absolute displacement (`isMovePos`, if `position=(x,y,z)` is set in the INI). |
+| `filedependancy` | Copied unchanged (Max file reference, irrelevant to the loader). |
+| Everything else | Model name is replaced via `ReplaceNoCase`, line copied unchanged. |
 
-Die eigentliche Vektor-Transformation läuft über homogene 4×1-Vektoren (`CMatrix v(4,1)`) und
-4×4-Matrizen (Skalierung, Rotation aus Grad in `CTransform::SetRotateFromDegrees`, Translation),
-die in `CTransform` einmal beim Laden der INI vorgerechnet werden (`m_rotTransform` etc.).
-Rotation wird dabei explizit für ein **linkshändiges Koordinatensystem** (3ds Max) negiert
-(Kommentar in `Transform.cpp`: "Max uses a LH-coordinate system").
+The actual vector transformation utilizes homogeneous 4×1 vectors (`CMatrix v(4,1)`) and 4×4 matrices (scaling, rotation converted from degrees in `CTransform::SetRotateFromDegrees`, translation), which are precalculated once in `CTransform` when the INI is loaded (`m_rotTransform`, etc.). Rotation is explicitly negated for a **left-handed coordinate system** (3ds Max) (comment in `Transform.cpp`: "Max uses a LH-coordinate system").
 
-`CMatrix` ist eine klassische Copy-on-Write-Matrixklasse: Kopien teilen sich zunächst den
-Datenzeiger (`m_pData`) und einen am Ende des Arrays mitgeführten Referenzzähler; erst bei
-einer schreibenden Operation (`SetElement`) wird bei `RefCount > 1` eine echte Kopie angelegt.
+`CMatrix` is a classic copy-on-write matrix class: copies initially share the data pointer (`m_pData`) and a reference counter kept at the end of the array; an actual copy is only created upon a write operation (`SetElement`) if `RefCount > 1`.
 
-## 5. Konfigurationsdatei (`NWNArmory.ini` / `standard.ini`)
+## 5. Configuration File (`NWNArmory.ini` / `standard.ini`)
 
-Beide Dateien sind inhaltlich identisch und enthalten `nTransforms=110`, also 110 Sektionen
-`[s0]`–`[s109]`. Jede Sektion definiert eine Regel für **ein Körperteil × eine Rasse**, z. B.:
+Both files are identical in content and contain `nTransforms=110`, meaning 110 sections `[s0]`–`[s109]`. Each section defines a rule for **one body part × one race**, e.g.:
 
 ```ini
 [s0]
@@ -109,77 +77,48 @@ substitute=??a*
 Scale=(0.72, 0.72, 0.72)
 ```
 
-Aufbau des Namensschemas (typisch für NWN-Rüstungsteile): `p` (Player) `m`/`f` (Geschlecht)
-`??` (Phänotyp-Nummer) `_` `<teil>` `???` (Variante). Das `substitute`-Muster `??a*` behält die
-ersten zwei Zeichen (Geschlecht+Phänotyp-Ziffer) und fügt an dritter Stelle den Rassen-Buchstaben
-ein (`a`=Halbling, `d`=Zwerg, `e`=Elf, `g`=Gnom, `o`=Halbork), der Rest wird per `*` übernommen.
-Alle 10 Körperteile (Gürtel, Brust, Hals, Becken, Schulter, Bizeps, Unterarm, Hand, Bein,
-Schienbein, Fuß) existieren jeweils für Männer und Frauen × 5 Rassen = 100 Sektionen, plus 10
-weitere (vermutlich die im Diff sichtbaren Erweiterungen) ergeben die 110.
+Structure of the naming convention (typical for NWN armor parts): `p` (Player) `m`/`f` (Gender) `??` (Phenotype Number) `_` `<part>` `???` (Variant). The `substitute` pattern `??a*` retains the first two characters (gender + phenotype digit) and inserts the race letter at the third position (`a`=Halfling, `d`=Dwarf, `e`=Elf, `g`=Gnome, `o`=Half-Orc), while the rest is carried over via `*`.
+All 10 body parts (belt, chest, neck, pelvis, shoulder, bicep, forearm, hand, leg, shin, foot) exist for men and women × 5 races = 100 sections, plus 10 additional ones yielding the 110.
 
-Nicht gesetzte Werte fallen auf sinnvolle Defaults zurück (Identität): Scale `(1,1,1)`,
-Rotate/Translate `(0,0,0)`, Min/Max `(-999…, 999…)` (siehe `readme.txt`, Versionshistorie 1.1/1.2).
+Unset values fall back to sensible defaults (Identity): Scale `(1,1,1)`, Rotate/Translate `(0,0,0)`, Min/Max `(-999…, 999…)`.
 
-## 6. Auffälligkeiten, Risiken, technische Schulden
+## 6. Anomalies, Risks, and Technical Debt
 
-- **O(Dateien × Regeln)-Komplexität ohne Kurzschluss**: Für jede Quelldatei werden alle
-  (bis zu 1024) Regeln durchprobiert – bei 110 Regeln und vielen Quelldateien kann das
-  spürbar dauern, ist aber unkritisch bei den üblichen Batch-Größen.
-- **Keine Kollisionsprüfung**: Wenn zwei Regeln denselben Zielnamen erzeugen, wird die
-  vorherige Datei stillschweigend überschrieben (`CFile::modeCreate` ohne Existenzprüfung).
-- **`CIO::SetOutFile`**: `CFileException fileException;` wird deklariert, aber im Fehlerfall
-  nie durch `CFile::Open` befüllt (der `pError`-Parameter wird nicht übergeben) – die
-  `TRACE`-Ausgabe zeigt daher immer eine uninitialisierte Ursache.
-- **Kein Zeilen-Zähler bei `ProcessVerts`/`ProcessTverts` bei vorzeitigem EOF im mittleren
-  Bereich der Datei ohne weitere Wiederherstellung** – Datei bleibt teilweise geschrieben,
-  Exception bricht nur die aktuelle Regel/Datei ab (durch die `catch`-Blöcke in
-  `OnBnClickedBtnGo`), die Verarbeitung der übrigen Quelldateien läuft aber weiter.
-  Angesichts des internen Kommentars in `NWNArmoryDlg.cpp` ("does not check if it is
-  overwriting files", "assumes all models are at position 0 0 0") sind das bekannte,
-  dokumentierte Einschränkungen der ursprünglichen Autoren.
-- **Rein ASCII-`.mdl`, kein Binärformat**: Laut dem beigelegten `nwn-mdl-format_v5.md`
-  unterstützt NWN auch ein binäres `.mdl`-Format; NWNArmory verarbeitet ausschließlich das
-  zeilenbasierte ASCII-Format. Modelle, die nur binär vorliegen, müssten vorher konvertiert
-  werden (z. B. mit einem externen Tool).
-- **`wildcmp`**: eigene, einfache Wildcard-Implementierung (kein Escaping, kein `?`-Fallback
-  bei leerem String außerhalb der Schleifenbedingung) – für die im Projekt genutzten,
-  einfachen Muster ausreichend.
-- **MFC/VC++-Alter**: Projektdateien liegen als `.vcproj`/`.sln` im VS2002/2003-Format vor
-  (`Version="7.10"`/`Format Version 8.00`), reine ASCII-`CString`, keine Unicode-Builds.
-  Ein Rebuild erfordert eine passende (ältere) MFC-Toolchain oder eine Migration auf ein
-  aktuelles Visual-Studio-Projektformat.
+- **O(Files × Rules) complexity without short-circuiting**: All (up to 1024) rules are evaluated for every source file—with 110 rules and many source files, this can take a noticeable amount of time, but is uncritical for typical batch sizes.
+- **No collision detection**: If two rules generate the same target name, the previous file is silently overwritten (`CFile::modeCreate` without existence check).
+- **`CIO::SetOutFile`**: `CFileException fileException;` is declared, but never populated by `CFile::Open` in case of an error (the `pError` parameter is not passed)—the `TRACE` output therefore always shows an uninitialized cause.
+- **No line counter for `ProcessVerts`/`ProcessTverts` on premature EOF** in the middle of the file without further recovery—the file remains partially written, the exception only aborts the current rule/file, but processing of the remaining source files continues. Given the internal comment in `NWNArmoryDlg.cpp` ("does not check if it is overwriting files", "assumes all models are at position 0 0 0"), these are known, documented limitations from the original authors.
+- **Strictly ASCII `.mdl`, no binary format**: NWN also supports a binary `.mdl` format; NWNArmory exclusively processes the line-based ASCII format. Models that are only available as binaries would need to be converted beforehand.
+- **`wildcmp`**: Custom, simple wildcard implementation (no escaping, no `?` fallback on an empty string outside the loop condition)—sufficient for the simple patterns used in the project.
+- **MFC/VC++ Age**: Project files are in `.vcproj`/`.sln` VS2002/2003 format, pure ASCII `CString`, no Unicode builds. A rebuild requires an appropriate older MFC toolchain or a migration to a current project format.
 
-## 7. Kurzfassung des Datenflusses
+## 7. Data Flow Summary
 
-```
-Quell-.mdl (ASCII) ──► CIO liest Zeile für Zeile
-                         │
-                         ├─ Dateiname passt zu match? ──nein──► Regel überspringen
-                         │        │ ja
-                         │        ▼
-                         │  neuer Modellname aus substitute
-                         │        │
-                         │        ▼
-              CTransform liefert vorab berechnete
-              Scale-/Rotate-/Translate-Matrizen (Vertex & Textur)
-                         │
-                         ▼
-         verts/tverts/position-Zeilen werden per CMatrix
-         transformiert, alle anderen Zeilen kopiert
-         (Modellname textuell ersetzt)
-                         │
-                         ▼
-              Ziel-.mdl im Zielverzeichnis
+```text
+Source .mdl (ASCII) ──► CIO reads line by line
+                          │
+                          ├─ Filename matches 'match'? ──no──► Skip rule
+                          │        │ yes
+                          │        ▼
+                          │  New model name from 'substitute'
+                          │        │
+                          │        ▼
+             CTransform provides precalculated
+             Scale/Rotate/Translate matrices (Vertex & Texture)
+                          │
+                          ▼
+        verts/tverts/position lines are transformed via CMatrix,
+        all other lines are copied
+        (Model name textually replaced)
+                          │
+                          ▼
+             Target .mdl in the destination directory
 ```
 
-## 8. Fazit
+## 8. Conclusion
 
-NWNArmory ist ein kompaktes, INI-gesteuertes Batch-Transformationswerkzeug: Es kombiniert
-einen einfachen Wildcard-Dateinamen-Matcher mit einer klassischen 4×4-Matrix-Transformations-
-kette, um aus menschlichen NWN-Rüstungsmodellen automatisiert rassenspezifische Skalierungen
-zu erzeugen. Die Geschäftslogik steckt fast vollständig in `Transform`/`Matrix`/`IO`; die
-MFC-Dialoge (`NWNArmoryDlg`, `BDialog`, `FolderDialog`, `ProgressWnd`, `ShowTransformsDlg`,
-`MyHyperLink`) sind reine Bedienoberfläche darum herum. Die mitgelieferten `NWNArmory.ini`
-und `standard.ini` enthalten die eigentliche "Rassentabelle" und sind damit der Teil, den man
-am ehesten anpassen oder erweitern möchte (z. B. für zusätzliche Rassen oder Körperteile),
-ohne den C++-Code selbst ändern zu müssen.
+NWNArmory is a compact, INI-driven batch transformation tool: It combines a simple wildcard filename matcher with a classic 4×4 matrix transformation chain to automatically generate race-specific scalings from human NWN armor models. The business logic is almost entirely contained in `Transform`/`Matrix`/`IO`; the MFC dialogs are purely the user interface wrapped around it. The included `NWNArmory.ini` and `standard.ini` contain the actual "race table" and are thus the part most likely to be adapted or expanded without having to modify the C++ code itself.
+
+## 9. Path to Modernization
+
+Given the technical debt of the legacy MFC framework, modernizing NWNArmory into a Rust-based command-line interface (CLI) provides a robust upgrade path. Transitioning to a Rust CLI allows the tool to run natively across platforms, enabling users to execute transformations effortlessly from a Bash terminal on systems like Linux Mint. The core engine can continue to scale and transform 3D game models efficiently using the `.ini` configuration files. When implementing the Rust parser, strict adherence to the formatting of the existing `.ini` style must be maintained so the program correctly interprets the rulesets. Finally, the transformed ASCII `.mdl` files can be easily previewed and validated by dropping them into modern browser-based 3D model viewers.

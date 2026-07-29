@@ -1,15 +1,15 @@
-// Portierung der Transform-/INI-Logik aus Transform.cpp + ini2.cpp.
+// Port of the transform/INI logic from Transform.cpp + ini2.cpp.
 //
-// Bewusste Vereinfachungen gegenüber dem Original (ponytail: YAGNI):
-// - Keine generische CMatrix-Klasse mit Referenzzählung; Rotation direkt
-//   als drei Achsen-Rotationen auf [f32; 3] angewendet (Ref.-Zählung war
-//   nur wegen manueller C++-Speicherverwaltung nötig, in Rust überflüssig).
-// - `position=(x,y,z)` wird gemäss readme.txt als ABSOLUTE Verschiebung
-//   behandelt (ersetzt die Original-Position), nicht als Artefakt der
-//   speziellen CMatrix-Multiplikation im Original.
-// - wildcmp ist der Standard-Glob-Algorithmus (funktional identisch für
-//   alle Muster in den mitgelieferten .ini-Dateien, ohne die Kanten der
-//   handgeschriebenen Original-Implementierung zu übernehmen).
+// Deliberate simplifications compared to the original (ponytail: YAGNI):
+// - No generic CMatrix class with reference counting; rotation applied directly
+//   as three axis rotations on [f32; 3] (ref counting was
+//   only necessary due to manual C++ memory management, redundant in Rust).
+// - position=(x,y,z) is treated according to readme.txt as an ABSOLUTE displacement
+//   (replaces the original position), not as an artifact of the
+//   special CMatrix multiplication in the original.
+// - wildcmp is the standard glob algorithm (functionally identical for
+//   all patterns in the provided .ini files, without carrying over the edge cases of the
+//   handwritten original implementation).
 
 use std::collections::HashMap;
 use std::fmt;
@@ -25,10 +25,10 @@ impl fmt::Display for ParseError {
 }
 impl std::error::Error for ParseError {}
 
-/// Eine geladene Transform-Sektion ([s0], [s1], ...).
+/// A loaded transform section ([s0], [s1], ...).
 pub struct Transform {
-    pub match_pat: String,   // bereits kleingeschrieben
-    pub substitute: String,  // bereits kleingeschrieben
+    pub match_pat: String,   // already lowercase
+    pub substitute: String,  // already lowercase
 
     pub scale: Vec3,
     pub rotate_deg: Vec3,
@@ -41,18 +41,18 @@ pub struct Transform {
     pub ttranslate: [f32; 2],
     pub tmin: [f32; 2],
     pub tmax: [f32; 2],
-    pub tbitmap: Option<String>, // Some(name) = tvert-Transform nur für dieses Bitmap
+    pub tbitmap: Option<String>, // Some(name) = tvert transform only for this bitmap
 
     pub position: PositionMode,
 }
 
 #[derive(Clone, Copy)]
 pub enum PositionMode {
-    /// Kein position=(...) angegeben: Position wird wie ein normaler Vertex
-    /// behandelt (Scale/Rotate/Translate, falls innerhalb min/max).
+    /// No position=(...) specified: position is treated like a normal vertex
+    /// (Scale/Rotate/Translate, if within min/max).
     LikeVertex,
-    /// position=(x,y,z) angegeben: absolute Verschiebung (ersetzt die
-    /// Original-Position), siehe readme.txt.
+    /// position=(x,y,z) specified: absolute displacement (replaces the
+    /// original position), see readme.txt.
     Absolute(Vec3),
 }
 
@@ -76,9 +76,9 @@ impl Transform {
         x >= self.tmin[0] && x <= self.tmax[0] && y >= self.tmin[1] && y <= self.tmax[1]
     }
 
-    /// Wendet Scale/Rotate/Translate auf einen Vertex an, sofern nicht
-    /// "just copy" und innerhalb min/max. Gibt None zurück wenn die Zeile
-    /// unverändert (Originaltext) übernommen werden soll.
+    /// Applies Scale/Rotate/Translate to a vertex, unless it is a
+    /// "just copy" and within min/max. Returns None if the line
+    /// should be copied unchanged (original text).
     pub fn apply_vertex(&self, v: Vec3) -> Option<Vec3> {
         if self.is_just_copy() {
             return None;
@@ -99,8 +99,8 @@ impl Transform {
         Some(p)
     }
 
-    /// Wendet TScale/TRotate(nur Z)/TTranslate auf eine Texturkoordinate an.
-    /// `last_bitmap` ist das zuletzt gesehene `bitmap`-Statement (klein).
+    /// Applies TScale/TRotate(Z only)/TTranslate to a texture coordinate.
+    /// `last_bitmap` is the most recently seen `bitmap` statement (lowercase).
     pub fn apply_tvert(&self, x: f32, y: f32, last_bitmap: &str) -> Option<(f32, f32)> {
         if self.is_just_tcopy() {
             return None;
@@ -143,9 +143,9 @@ fn no_trans(t: Vec3) -> bool {
     t.iter().all(|v| v.abs() < 0.0001)
 }
 
-/// Wendet Rotation in Grad an: X- und Y-Achse negiert (Max ist
-/// linkshändig, siehe Original-Kommentar in Transform.cpp), Reihenfolge
-/// X dann Y dann Z, entsprechend der Original-Multiplikationsreihenfolge.
+/// Applies rotation in degrees: X and Y axes negated (Max is
+/// left-handed, see original comment in Transform.cpp), order
+/// X then Y then Z, corresponding to the original multiplication order.
 fn rotate_xyz(v: Vec3, deg: Vec3) -> Vec3 {
     let rx = (-deg[0]).to_radians();
     let ry = (-deg[1]).to_radians();
@@ -168,7 +168,7 @@ fn rotate_z(v: Vec3, r: f32) -> Vec3 {
 }
 
 // ---------------------------------------------------------------------
-// INI-Parsing (Ersatz fuer ini2.cpp / GetPrivateProfileString)
+// INI parsing (replacement for ini2.cpp / GetPrivateProfileString)
 // ---------------------------------------------------------------------
 
 type Section = HashMap<String, String>;
@@ -195,10 +195,10 @@ pub fn parse_ini(text: &str, debug: bool) -> HashMap<String, Section> {
             let val = line[eq + 1..].trim().to_string();
             sections.get_mut(&current).unwrap().insert(key, val);
         } else if debug {
-            // ponytail: kein echtes Log-System, ein --debug-Flag reicht,
-            // um stillschweigend verschluckte Zeilen (fehlendes '=') sichtbar zu machen
+            // ponytail: no real logging system, a --debug flag is enough
+            // to make silently swallowed lines (missing '=') visible
             eprintln!(
-                "[error] Zeile {} in Sektion [{}] ignoriert (kein '='): {}",
+                "[error] Line {} in section [{}] ignored (no '='): {}",
                 lineno + 1,
                 current,
                 line
@@ -216,7 +216,7 @@ fn get_int(sec: &Section, key: &str, default: i64) -> i64 {
     sec.get(key).and_then(|s| s.parse().ok()).unwrap_or(default)
 }
 
-/// Parst "( a , b , c )" -> [a,b,c]. Fehlende Felder werden 0.
+/// Parses "( a , b , c )" -> [a,b,c]. Missing fields become 0.
 fn parse_tuple(s: &str) -> Vec<f32> {
     s.trim()
         .trim_start_matches('(')
@@ -247,7 +247,7 @@ fn parse_scalar(sec: &Section, key: &str, default: &str) -> f32 {
     parse_tuple(raw).first().copied().unwrap_or(0.0)
 }
 
-/// Laedt alle [s0]..[sN-1] Sektionen gemaess [Global] nTransforms.
+/// Loads all [s0]..[sN-1] sections according to [Global] nTransforms.
 pub fn load_transforms(ini_text: &str, debug: bool) -> Result<Vec<Transform>, ParseError> {
     const TRANSFORM_KEYS: &[&str] = &[
     "match", "substitute", "scale", "rotate", "translate", "minimum", "maximum",
@@ -256,10 +256,10 @@ pub fn load_transforms(ini_text: &str, debug: bool) -> Result<Vec<Transform>, Pa
     let sections = parse_ini(ini_text, debug);
     let global = sections
         .get("global")
-        .ok_or_else(|| ParseError("keine [Global]-Sektion in der INI gefunden".into()))?;
+        .ok_or_else(|| ParseError("no [Global] section found in the INI".into()))?;
     let n = get_int(global, "ntransforms", 0);
     if n <= 0 {
-        return Err(ParseError("[Global] nTransforms fehlt oder ist 0".into()));
+        return Err(ParseError("[Global] nTransforms missing or is 0".into()));
     }
 
     let mut out = Vec::with_capacity(n as usize);
@@ -269,7 +269,7 @@ pub fn load_transforms(ini_text: &str, debug: bool) -> Result<Vec<Transform>, Pa
 
         let unknown: Vec<&String> = sec.keys().filter(|k| !TRANSFORM_KEYS.contains(&k.as_str())).collect();
         if !unknown.is_empty() {
-            eprintln!("Warnung: [{key}] enthaelt unbekannte Stichworte, ignoriert. Nutze --debug fuer Details.");
+            eprintln!("Warning: [{key}] contains unknown keywords, ignored. Use --debug for details.");
             if debug {
                 for u in &unknown {
                     eprintln!("  [{key}] {u} = {}", sec[*u]);
@@ -279,7 +279,7 @@ pub fn load_transforms(ini_text: &str, debug: bool) -> Result<Vec<Transform>, Pa
 
         let match_pat = get_str(sec, "match", "").to_lowercase();
         if match_pat.is_empty() {
-            continue; // deaktivierte Sektion (entspricht Original: match auf "" gesetzt = uebersprungen)
+            continue; // deactivated section (corresponds to original: match set to "" = skipped)
         }
         let substitute = get_str(sec, "substitute", "*").to_lowercase();
 
@@ -313,11 +313,11 @@ pub fn load_transforms(ini_text: &str, debug: bool) -> Result<Vec<Transform>, Pa
 }
 
 // ---------------------------------------------------------------------
-// Wildcard-Matching (Ersatz fuer wildcmp in IO.cpp)
+// Wildcard matching (replacement for wildcmp in IO.cpp)
 // ---------------------------------------------------------------------
 
-/// Standard-Glob-Matching mit `*` und `?`. Erwartet bereits
-/// kleingeschriebene Strings (Original vergleicht ebenfalls case-insensitiv).
+/// Standard glob matching with `*` and `?`. Expects
+/// lowercase strings (original also compares case-insensitively).
 pub fn wildcard_match(pattern: &str, text: &str) -> bool {
     let wild: Vec<char> = pattern.chars().collect();
     let s: Vec<char> = text.chars().collect();
@@ -347,8 +347,8 @@ pub fn wildcard_match(pattern: &str, text: &str) -> bool {
     wi == wild.len()
 }
 
-/// Baut den Zielmodellnamen aus `old_name` (klein) und `substitute`-Muster.
-/// Entspricht CIO::doSubstitute in IO.cpp.
+/// Builds the target model name from `old_name` (lowercase) and `substitute` pattern.
+/// Corresponds to CIO::doSubstitute in IO.cpp.
 pub fn build_substitute(old_name: &str, subst: &str) -> String {
     let mut out: Vec<char> = old_name.chars().collect();
     let mut idx = 0usize;
@@ -356,7 +356,7 @@ pub fn build_substitute(old_name: &str, subst: &str) -> String {
         match c {
             '?' => idx += 1,
             '*' => idx = out.len(),
-            '\\' | '/' | ':' | '"' | '<' | '>' | '|' => { /* ungueltiges Wildcard-Zeichen, ueberspringen */ }
+            '\\' | '/' | ':' | '"' | '<' | '>' | '|' => { /* invalid wildcard character, skip */ }
             other => {
                 if idx < out.len() {
                     out[idx] = other;
@@ -386,10 +386,10 @@ mod tests {
 
     #[test]
     fn substitute_halfling() {
-        // "pm" bleibt (2x '?'), 'a' ersetzt die Rassen-Stelle (Original-Ziffer '0'),
-        // '*' uebernimmt den Rest inkl. erhaltener Phaenotyp-Ziffer '1'.
-        // Ergibt "pma1_belt001" (Player, maennlich, Halfling(a), Phaenotyp 1) --
-        // konsistent mit der echten NWN-Namenskonvention p<Geschlecht><Rasse><Phaenotyp>.
+        // "pm" remains (2x '?'), 'a' replaces the race position (original digit '0'),
+        // '*' carries over the rest incl. preserved phenotype digit '1'.
+        // Yields "pma1_belt001" (Player, male, Halfling(a), phenotype 1) --
+        // consistent with the real NWN naming convention p<gender><race><phenotype>.
         assert_eq!(build_substitute("pm01_belt001", "??a*"), "pma1_belt001");
     }
 
