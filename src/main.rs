@@ -40,8 +40,8 @@ fn print_usage() {
     eprintln!();
     eprintln!("Applies the scaling/rotation/translation rules defined in <transforms.ini>");
     eprintln!("to ASCII NWN .mdl files (race variants).");
-    eprintln!("  --debug, --d;  Shows ignored/erroneous lines when loading the INI.");
-    eprintln!("  --values;      Fits scale/rotate/translate between two .mdl files and prints INI-ready output.");
+    eprintln!("  --debug, -d;     Shows ignored/erroneous lines when loading the INI.");
+    eprintln!("  --values, -v;    Fits scale/rotate/translate between two .mdl files and prints INI-ready output.");
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -50,7 +50,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if raw_args.iter().any(|a| a == "--values" || a == "-v") {
         let rest: Vec<&String> = raw_args.iter().filter(|a| *a != "--values" && *a != "-v").collect();
         if rest.len() != 2 {
-            eprintln!("Usage: nwnarmory --values <source.mdl> <target.mdl>");
+            eprintln!("Usage: nwnarmory --values|-v <source.mdl> <target.mdl>");
             std::process::exit(2);
         }
         return fit::run_values(rest[0], rest[1]);
