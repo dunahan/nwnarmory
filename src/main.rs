@@ -17,6 +17,7 @@
 //   - No GUI. The purpose (select INI, select source files, select target folder,
 //     "Go") is mapped 1:1 to CLI arguments.
 
+mod fit;
 mod transform;
 
 use std::collections::HashSet;
@@ -34,17 +35,30 @@ fn main() {
 }
 
 fn print_usage() {
-    eprintln!("Usage: nwnarmory [--debug|--d] <transforms.ini> <source_file_or_folder> <target_folder>");
+    eprintln!("Usage: nwnarmory [--debug|-d] <transforms.ini> <source_file_or_folder> <target_folder>");
+    eprintln!("       nwnarmory [--values|-v] <source.mdl> <target.mdl>");
     eprintln!();
     eprintln!("Applies the scaling/rotation/translation rules defined in <transforms.ini>");
     eprintln!("to ASCII NWN .mdl files (race variants).");
     eprintln!("  --debug, --d;  Shows ignored/erroneous lines when loading the INI.");
+    eprintln!("  --values;      Fits scale/rotate/translate between two .mdl files and prints INI-ready output.");
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    let debug = raw_args.iter().any(|a| a == "--debug" || a == "--d");
-    let args: Vec<String> = raw_args.into_iter().filter(|a| a != "--debug" && a != "--d").collect();
+
+    if raw_args.iter().any(|a| a == "--values" || a == "-v") {
+        let rest: Vec<&String> = raw_args.iter().filter(|a| *a != "--values" && *a != "-v").collect();
+        if rest.len() != 2 {
+            eprintln!("Usage: nwnarmory --values <source.mdl> <target.mdl>");
+            std::process::exit(2);
+        }
+        return fit::run_values(rest[0], rest[1]);
+    }
+
+    let debug = raw_args.iter().any(|a| a == "--debug" || a == "-d");
+
+    let args: Vec<String> = raw_args.into_iter().filter(|a| a != "--debug" && a != "-d").collect();
 
     if args.len() != 3 {
         print_usage();
