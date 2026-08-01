@@ -17,6 +17,7 @@
 //   - No GUI. The purpose (select INI, select source files, select target folder,
 //     "Go") is mapped 1:1 to CLI arguments.
 
+mod fit;
 mod transform;
 
 use std::collections::HashSet;
@@ -34,17 +35,64 @@ fn main() {
 }
 
 fn print_usage() {
-    eprintln!("Usage: nwnarmory [--debug|--d] <transforms.ini> <source_file_or_folder> <target_folder>");
+    eprintln!("Usage: nwnarmory [--debug|-d] [--rename-bitmap[=NAME]] <transforms.ini> <source_file_or_folder> <target_folder>");
+    eprintln!("       nwnarmory [--values|-v] <source.mdl> <target.mdl>");
     eprintln!();
     eprintln!("Applies the scaling/rotation/translation rules defined in <transforms.ini>");
     eprintln!("to ASCII NWN .mdl files (race variants).");
-    eprintln!("  --debug, --d;  Shows ignored/erroneous lines when loading the INI.");
+    eprintln!("  --debug, -d;               Shows ignored/erroneous lines when loading the INI.");
+    eprintln!("  --values, -v;              Fits scale/rotate/translate between two .mdl files and prints INI-ready output.");
+    eprintln!("  --rename-bitmap[=NAME];    Off by default: the bitmap/texture line is left untouched.");
+    eprintln!("                             Bare flag: substitute the model name into it, like the old default.");
+    eprintln!("                             With =NAME: set the bitmap line to that literal texture name instead.");
+}
+
+/// What to do with a `bitmap <name>` line while rewriting a model.
+/// ponytail: default is Keep, matching what modders actually do in practice
+/// (see NWNArmory-Analysis.md #6 -- the old tool always renamed, users rarely
+/// wanted that). Explicit opt-in restores the old behavior.
+enum BitmapMode {
+    /// Leave the bitmap line exactly as in the source file.
+    Keep,
+    /// Substitute the model name into the bitmap line (old default behavior).
+    RenameToModel,
+    /// Replace the bitmap value with this fixed texture name.
+    RenameTo(String),
+}
+
+/// Parses `--rename-bitmap` / `--rename-bitmap=NAME` out of the raw args.
+/// Returns BitmapMode::Keep if the flag is absent.
+fn parse_bitmap_mode(args: &[String]) -> BitmapMode {
+    for a in args {
+        if let Some(name) = a.strip_prefix("--rename-bitmap=") {
+            return BitmapMode::RenameTo(name.to_string());
+        }
+        if a == "--rename-bitmap" {
+            return BitmapMode::RenameToModel;
+        }
+    }
+    BitmapMode::Keep
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    let debug = raw_args.iter().any(|a| a == "--debug" || a == "--d");
-    let args: Vec<String> = raw_args.into_iter().filter(|a| a != "--debug" && a != "--d").collect();
+
+    if raw_args.iter().any(|a| a == "--values" || a == "-v") {
+        let rest: Vec<&String> = raw_args.iter().filter(|a| *a != "--values" && *a != "-v").collect();
+        if rest.len() != 2 {
+            eprintln!("Usage: nwnarmory --values|-v <source.mdl> <target.mdl>");
+            std::process::exit(2);
+        }
+        return fit::run_values(rest[0], rest[1]);
+    }
+
+    let debug = raw_args.iter().any(|a| a == "--debug" || a == "-d");
+    let bitmap_mode = parse_bitmap_mode(&raw_args);
+
+    let args: Vec<String> = raw_args
+        .into_iter()
+        .filter(|a| a != "--debug" && a != "-d" && a != "--rename-bitmap" && !a.starts_with("--rename-bitmap="))
+        .collect();
 
     if args.len() != 3 {
         print_usage();
@@ -98,7 +146,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             eprintln!("Processing {} -> {}", src_path.display(), out_path.display());
-            if let Err(e) = process_model(src_path, &stem, &out_name, &out_path, t) {
+            if let Err(e) = process_model(src_path, &stem, &out_name, &out_path, t, &bitmap_mode) {
                 eprintln!("  Error in {}: {e}", src_path.display());
                 continue;
             }
@@ -145,9 +193,10 @@ fn process_model(
     dest_stem: &str,
     out_path: &Path,
     t: &Transform,
+    bitmap_mode: &BitmapMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tmp_path = out_path.with_extension("mdl.tmp");
-    let result = process_model_inner(src_path, src_stem, dest_stem, &tmp_path, t);
+    let result = process_model_inner(src_path, src_stem, dest_stem, &tmp_path, t, bitmap_mode);
     match result {
         Ok(()) => {
             fs::rename(&tmp_path, out_path)?;
@@ -167,6 +216,7 @@ fn process_model_inner(
     dest_stem: &str,
     tmp_path: &Path,
     t: &Transform,
+    bitmap_mode: &BitmapMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let reader = BufReader::new(fs::File::open(src_path)?);
     let mut out = fs::File::create(tmp_path)?;
@@ -195,7 +245,13 @@ fn process_model_inner(
                 if let Some(name) = it.next() {
                     last_bitmap = name.to_lowercase();
                 }
-                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
+                let indent = &line[..line.len() - trimmed.len()];
+                let out_line = match bitmap_mode {
+                    BitmapMode::Keep => line.clone(),
+                    BitmapMode::RenameToModel => replace_no_case(&line, src_stem, dest_stem),
+                    BitmapMode::RenameTo(name) => format!("{indent}bitmap {name}"),
+                };
+                writeln!(out, "{out_line}")?;
             }
             "position" => {
                 let vals: Vec<f32> = it.filter_map(|s| s.parse().ok()).collect();

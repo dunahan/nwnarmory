@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.4]
+
+### Added
+- **`--rename-bitmap[=NAME]` flag:** New opt-in control over the `bitmap` texture line. Bare flag restores the historic behavior (new model name substituted in); `--rename-bitmap=NAME` sets the `bitmap` line to a literal texture name instead.
+- **`--values` / `-v` mode:** `nwnarmory --values <source.mdl> <target.mdl>` fits `scale`/`rotate`/`translate`, `tscale`/`trotate`/`ttranslate`, and `position` between two already-authored models via least squares, and prints the result as ready-to-paste `transforms.ini` lines with fit residuals.
+
+### Changed
+- **Behavior:** the `bitmap` line is now left unchanged by default. Previously it was always rewritten to the newly generated model name, which in practice was rarely what modders wanted (see `docs/NWNArmory-Analysis.md` #6). Pass `--rename-bitmap` to get the old behavior back.
+
 ## [1.2.3]
 - Documents, comments, and feedback translated into English.
 

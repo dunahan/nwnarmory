@@ -54,6 +54,37 @@ nwnarmory NWNArmoryv121.ini pmh0_chest001.mdl ./created
 *   `<transforms.ini>`: The configuration file containing the scaling and translation matrices (e.g., `standard.ini`).
 *   `<source_file_or_folder>`: A single `.mdl` file or a directory containing multiple `.mdl` files.
 *   `<target_folder>`: The directory where the transformed models will be saved.
+*   `--debug` / `-d`: Prints ignored/erroneous INI lines and diagnostics for models that matched no transform rule.
+*   `--rename-bitmap[=NAME]`: See "Texture (Bitmap) Renaming" below.
+
+- Deriving transform values from two already-fitted models:
+```bash
+nwnarmory --values pmh0_chest001.mdl pfa0_chest001.mdl
+nwnarmory -v pmh0_chest001.mdl pfa0_chest001.mdl
+```
+
+See "Deriving Transform Values" below.
+
+## 🧮 Deriving Transform Values (`--values` / `-v`)
+
+If you already have a hand-fitted source and target model (e.g. exported from Max/Blender or 1:1-corresponding race variants) and want the matching `transforms.ini` section instead of eyeballing the numbers, run:
+
+```bash
+nwnarmory --values pmh0_chest001.mdl pfa0_chest001.mdl
+```
+
+This fits `scale`, `rotate`, `translate` (least-squares over the `verts` block), `tscale`/`trotate`/`ttranslate` (over `tverts`), and `position` (absolute, read directly from the target file) between the two models, and prints the result as INI lines ready to paste into an `[sN]` section. Each fit is followed by a `max_residual`/`mean_residual` line — a high residual means the two files don't relate by a simple scale+rotate+translate (or aren't a matching pair).
+
+**Note:** this requires vertex correspondence — both models must have the same vertex count and order, i.e. the target was never remeshed relative to the source. This holds for genuine NWNArmory-style race variants.
+
+## 🖼️ Texture (Bitmap) Renaming
+
+By default, the `bitmap` line in generated models is left exactly as in the source file. The very old original tool always tried to rename it to match the new model name; in practice this was rarely what modders wanted, so it's now opt-in:
+
+*   `--rename-bitmap`: substitutes the newly generated model name into the `bitmap` line (the historic default behavior).
+*   `--rename-bitmap=NAME`: sets the `bitmap` line to the literal texture name `NAME`, regardless of the generated model name.
+
+Omit the flag entirely if your texture names are independent of the model name (the common case).
 
 ## ⚠️ Important Prerequisites
 
