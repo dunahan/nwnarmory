@@ -99,6 +99,35 @@ impl Transform {
         Some(p)
     }
 
+    /// Applies the inverse-transpose of the linear part (Scale, Rotate) to a
+    /// direction vector (normal or tangent xyz), then renormalizes. No
+    /// translation (directions don't translate) and no min/max range gating:
+    /// unlike verts, normals have no independent clipping in the original
+    /// tool and no paired vertex position is buffered at this point in the
+    /// line-by-line stream (see NWNArmory-Analysis.md, EE extensions).
+    ///
+    /// Correct handling of non-uniform scale requires the inverse transpose
+    /// of the linear transform, not the transform itself, or the normal
+    /// tilts away from the true surface normal on non-uniformly scaled
+    /// geometry. apply_vertex's linear part is M = R * S (scale then
+    /// rotate); since S is diagonal and R is orthogonal,
+    /// invTranspose(M) = R * inv(S) -- divide by scale first, then apply the
+    /// same rotation used for verts.
+    pub fn apply_normal(&self, n: Vec3) -> Option<Vec3> {
+        if no_scale(self.scale) && no_rot(self.rotate_deg) {
+            return None;
+        }
+        let mut p = [
+            safe_inv_scale(n[0], self.scale[0]),
+            safe_inv_scale(n[1], self.scale[1]),
+            safe_inv_scale(n[2], self.scale[2]),
+        ];
+        if !no_rot(self.rotate_deg) {
+            p = rotate_xyz(p, self.rotate_deg);
+        }
+        Some(normalize_vec3(p))
+    }
+
     /// Applies TScale/TRotate(Z only)/TTranslate to a texture coordinate.
     /// `last_bitmap` is the most recently seen `bitmap` statement (lowercase).
     pub fn apply_tvert(&self, x: f32, y: f32, last_bitmap: &str) -> Option<(f32, f32)> {
@@ -110,6 +139,24 @@ impl Transform {
                 return None;
             }
         }
+        self.apply_tvert_raw(x, y)
+    }
+
+    /// Applies TScale/TRotate(Z only)/TTranslate to a texture coordinate on
+    /// an EE extra UV channel (`tverts1`/`tverts2`/`tverts3`). Unlike the
+    /// primary `tverts` channel, extra channels are NOT gated by
+    /// `tbitmap`: that INI option predates multi-channel UVs, and every
+    /// `tbitmap=` rule in the wild was written to restrict the primary
+    /// texture stage, never a lightmap/normal-map UV set. Same
+    /// scale/rotate/translate math otherwise.
+    pub fn apply_tvert_extra(&self, x: f32, y: f32) -> Option<(f32, f32)> {
+        if self.is_just_tcopy() {
+            return None;
+        }
+        self.apply_tvert_raw(x, y)
+    }
+
+    fn apply_tvert_raw(&self, x: f32, y: f32) -> Option<(f32, f32)> {
         if !self.in_t_range(x, y) {
             return None;
         }
@@ -141,6 +188,27 @@ fn no_rot(r: Vec3) -> bool {
 }
 fn no_trans(t: Vec3) -> bool {
     t.iter().all(|v| v.abs() < 0.0001)
+}
+
+/// Divides a direction component by a scale factor for the inverse-transpose
+/// normal transform. A near-zero scale axis (degenerate/flattening INI data)
+/// would divide-by-zero into Inf/NaN; falling back to the un-divided
+/// component keeps the result finite instead of producing garbage output.
+fn safe_inv_scale(component: f32, scale: f32) -> f32 {
+    if scale.abs() < 1e-6 {
+        component
+    } else {
+        component / scale
+    }
+}
+
+fn normalize_vec3(v: Vec3) -> Vec3 {
+    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if len < 1e-8 {
+        v
+    } else {
+        [v[0] / len, v[1] / len, v[2] / len]
+    }
 }
 
 /// Applies rotation in degrees: X and Y axes negated (Max is
@@ -391,6 +459,92 @@ mod tests {
         // Yields "pma1_belt001" (Player, male, Halfling(a), phenotype 1) --
         // consistent with the real NWN naming convention p<gender><race><phenotype>.
         assert_eq!(build_substitute("pm01_belt001", "??a*"), "pma1_belt001");
+    }
+
+    fn identity_transform() -> Transform {
+        Transform {
+            match_pat: String::new(),
+            substitute: String::new(),
+            scale: [1.0, 1.0, 1.0],
+            rotate_deg: [0.0, 0.0, 0.0],
+            translate: [0.0, 0.0, 0.0],
+            min: [-999.0, -999.0, -999.0],
+            max: [999.0, 999.0, 999.0],
+            tscale: [1.0, 1.0],
+            trotate_z_deg: 0.0,
+            ttranslate: [0.0, 0.0],
+            tmin: [-999.0, -999.0],
+            tmax: [999.0, 999.0],
+            tbitmap: None,
+            position: PositionMode::LikeVertex,
+        }
+    }
+
+    #[test]
+    fn normal_nonuniform_scale_uses_inverse_transpose() {
+        // scale=(2,1,1): a naive "same transform as vertex" would scale the
+        // normal by (2,1,1) too, tilting it the WRONG way. The correct
+        // inverse-transpose divides by scale first: (1/2, 1, 1).
+        let mut t = identity_transform();
+        t.scale = [2.0, 1.0, 1.0];
+        let n = t.apply_normal([1.0, 1.0, 0.0]).unwrap();
+
+        let expected_len = (0.5f32 * 0.5 + 1.0f32 * 1.0).sqrt();
+        let expected = [0.5 / expected_len, 1.0 / expected_len, 0.0];
+        assert!((n[0] - expected[0]).abs() < 1e-5, "got {:?}", n);
+        assert!((n[1] - expected[1]).abs() < 1e-5, "got {:?}", n);
+        assert!(n[2].abs() < 1e-6, "got {:?}", n);
+
+        // Sanity: the naive (wrong) approach would have produced (2,1,0)
+        // normalized, i.e. X/Y swapped in dominance vs. the correct result.
+        let wrong_len = (2.0f32 * 2.0 + 1.0f32 * 1.0).sqrt();
+        let wrong = [2.0 / wrong_len, 1.0 / wrong_len, 0.0];
+        assert!((n[0] - wrong[0]).abs() > 1e-3, "correction had no effect");
+    }
+
+    #[test]
+    fn normal_just_copy_ignores_translation() {
+        // Directions never translate; a pure-translation transform must be
+        // a no-op for normals even though it is NOT a no-op for vertices.
+        let mut t = identity_transform();
+        t.translate = [5.0, -2.0, 0.0];
+        assert!(t.apply_normal([0.0, 0.0, 1.0]).is_none());
+    }
+
+    #[test]
+    fn normal_uniform_scale_keeps_direction() {
+        // Uniform scale must not change the normal's direction, only its
+        // magnitude, and apply_normal renormalizes anyway.
+        let mut t = identity_transform();
+        t.scale = [3.0, 3.0, 3.0];
+        let n = t.apply_normal([0.0, 0.6, 0.8]).unwrap();
+        assert!((n[1] - 0.6).abs() < 1e-5, "got {:?}", n);
+        assert!((n[2] - 0.8).abs() < 1e-5, "got {:?}", n);
+    }
+
+    #[test]
+    fn normal_zero_scale_axis_stays_finite() {
+        // Degenerate (flattening) scale must not produce Inf/NaN.
+        let mut t = identity_transform();
+        t.scale = [0.0, 1.0, 1.0];
+        let n = t.apply_normal([1.0, 0.0, 0.0]).unwrap();
+        assert!(n.iter().all(|v| v.is_finite()), "got {:?}", n);
+    }
+
+    #[test]
+    fn tvert_extra_ignores_tbitmap_filter() {
+        // apply_tvert (primary channel) is gated by tbitmap; apply_tvert_extra
+        // (tverts1/2/3) must NOT be, even with the exact same transform.
+        let mut t = identity_transform();
+        t.tscale = [2.0, 2.0];
+        t.tbitmap = Some("some_other_bitmap".to_string());
+
+        // Primary channel: bitmap doesn't match tbitmap -> untransformed (None).
+        assert!(t.apply_tvert(0.5, 0.5, "current_bitmap").is_none());
+
+        // Extra channel: same transform applies regardless of tbitmap.
+        let (x, y) = t.apply_tvert_extra(0.5, 0.5).unwrap();
+        assert!((x - 1.0).abs() < 1e-5 && (y - 1.0).abs() < 1e-5, "got ({x}, {y})");
     }
 
     #[test]
