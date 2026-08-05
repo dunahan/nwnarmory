@@ -16,6 +16,26 @@
 //   - Only ASCII .mdl is supported, just like in the original.
 //   - No GUI. The purpose (select INI, select source files, select target folder,
 //     "Go") is mapped 1:1 to CLI arguments.
+//
+// EE (Enhanced Edition) additions the original tool predates:
+//   - `normals N` blocks (explicit per-vertex normals) are now transformed
+//     using the inverse-transpose of the Scale/Rotate matrix, not the plain
+//     vertex transform -- see Transform::apply_normal for why. Direction
+//     vectors, so no Translate and no min/max range gating (see doc comment
+//     on apply_normal for the rationale).
+//   - `tangents N` blocks (Vec4: xyz direction + w handedness) reuse
+//     apply_normal for xyz; w is +-1 and untouched by Scale/Rotate, so it
+//     passes through unchanged.
+//   - `tverts1`/`tverts2`/`tverts3` (EE lightmap / extra UV channels) reuse
+//     the same TScale/TRotate/TTranslate math as `tverts`, but are not
+//     gated by `tbitmap` -- see Transform::apply_tvert_extra for why.
+//   - `animverts`/`animtverts` (EE animmesh position/UV keyframes) reuse
+//     `write_transformed_verts`/`write_transformed_tverts` as-is: same
+//     "N vec3 lines" layout as `verts`/`tverts`, no new transform needed.
+//   - `materialname`, `weights`, `constraints` still pass through as
+//     text-only (unchanged from the model's source values), same as every
+//     other unrecognised line. Tracked as follow-up work, not yet handled
+//     here.
 
 mod fit;
 mod transform;
@@ -236,10 +256,40 @@ fn process_model_inner(
                 writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
                 write_transformed_verts(&mut lines, &mut out, n, t)?;
             }
+            // EE animmesh position/UV keyframes: same "N vec3 lines" layout
+            // as verts/tverts, so the existing writers are reused as-is
+            // (no new transform logic -- animverts are positions, animtverts
+            // are UVs on the same texture stage animmesh inherits from
+            // trimesh, so `last_bitmap`/`tbitmap` gating applies the same).
+            "animverts" => {
+                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
+                write_transformed_verts(&mut lines, &mut out, n, t)?;
+            }
+            "animtverts" => {
+                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
+                write_transformed_tverts(&mut lines, &mut out, n, t, &last_bitmap)?;
+            }
+            "normals" => {
+                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
+                write_transformed_normals(&mut lines, &mut out, n, t)?;
+            }
+            "tangents" => {
+                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
+                write_transformed_tangents(&mut lines, &mut out, n, t)?;
+            }
             "tverts" => {
                 let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
                 writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
                 write_transformed_tverts(&mut lines, &mut out, n, t, &last_bitmap)?;
+            }
+            "tverts1" | "tverts2" | "tverts3" => {
+                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
+                write_transformed_tverts_extra(&mut lines, &mut out, n, t)?;
             }
             "bitmap" => {
                 if let Some(name) = it.next() {
@@ -303,6 +353,64 @@ fn write_transformed_verts(
     Ok(())
 }
 
+/// Transforms an EE `normals N` block. Direction vectors, so this uses
+/// `apply_normal` (inverse-transpose of Scale/Rotate) instead of
+/// `apply_vertex` -- see the doc comment on `Transform::apply_normal`.
+fn write_transformed_normals(
+    lines: &mut std::io::Lines<BufReader<fs::File>>,
+    out: &mut fs::File,
+    n: usize,
+    t: &Transform,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for _ in 0..n {
+        let Some(line) = lines.next() else {
+            return Err("unexpected EOF in normals block".into());
+        };
+        let line = line?;
+        let vals: Vec<f32> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+        if vals.len() < 3 {
+            writeln!(out, "{line}")?;
+            continue;
+        }
+        let v = [vals[0], vals[1], vals[2]];
+        match t.apply_normal(v) {
+            Some(p) => writeln!(out, "    {:.7} {:.7} {:.7}", p[0], p[1], p[2])?,
+            None => writeln!(out, "{line}")?,
+        }
+    }
+    Ok(())
+}
+
+/// Transforms an EE `tangents N` block. Each line is `x y z w`, where xyz is
+/// a direction vector (same treatment as `normals`, via `apply_normal`) and
+/// w is the +-1 handedness sign, which is untouched by Scale/Rotate and so
+/// carried through unchanged.
+fn write_transformed_tangents(
+    lines: &mut std::io::Lines<BufReader<fs::File>>,
+    out: &mut fs::File,
+    n: usize,
+    t: &Transform,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for _ in 0..n {
+        let Some(line) = lines.next() else {
+            return Err("unexpected EOF in tangents block".into());
+        };
+        let line = line?;
+        let vals: Vec<f32> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+        if vals.len() < 4 {
+            writeln!(out, "{line}")?;
+            continue;
+        }
+        let v = [vals[0], vals[1], vals[2]];
+        let w = vals[3];
+        match t.apply_normal(v) {
+            Some(p) => writeln!(out, "    {:.7} {:.7} {:.7} {:.7}", p[0], p[1], p[2], w)?,
+            None => writeln!(out, "{line}")?,
+        }
+    }
+    Ok(())
+}
+
 fn write_transformed_tverts(
     lines: &mut std::io::Lines<BufReader<fs::File>>,
     out: &mut fs::File,
@@ -321,6 +429,34 @@ fn write_transformed_tverts(
             continue;
         }
         match t.apply_tvert(vals[0], vals[1], last_bitmap) {
+            Some((x, y)) => writeln!(out, "    {:.7} {:.7} {:.7}", x, y, 0.0)?,
+            None => writeln!(out, "{line}")?,
+        }
+    }
+    Ok(())
+}
+
+/// Transforms an EE `tverts1`/`tverts2`/`tverts3` block (lightmap / extra UV
+/// channels). Same TScale/TRotate/TTranslate math as the primary `tverts`
+/// channel via `apply_tvert_extra`, but without `tbitmap` gating -- see the
+/// doc comment on `Transform::apply_tvert_extra` for why.
+fn write_transformed_tverts_extra(
+    lines: &mut std::io::Lines<BufReader<fs::File>>,
+    out: &mut fs::File,
+    n: usize,
+    t: &Transform,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for _ in 0..n {
+        let Some(line) = lines.next() else {
+            return Err("unexpected EOF in tverts1/2/3 block".into());
+        };
+        let line = line?;
+        let vals: Vec<f32> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+        if vals.len() < 2 {
+            writeln!(out, "{line}")?;
+            continue;
+        }
+        match t.apply_tvert_extra(vals[0], vals[1]) {
             Some((x, y)) => writeln!(out, "    {:.7} {:.7} {:.7}", x, y, 0.0)?,
             None => writeln!(out, "{line}")?,
         }
