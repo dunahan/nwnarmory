@@ -29,10 +29,13 @@
 //   - `tverts1`/`tverts2`/`tverts3` (EE lightmap / extra UV channels) reuse
 //     the same TScale/TRotate/TTranslate math as `tverts`, but are not
 //     gated by `tbitmap` -- see Transform::apply_tvert_extra for why.
-//   - `materialname`, `weights`, `constraints`, `animverts`/`animtverts`
-//     still pass through as text-only (unchanged from the model's source
-//     values), same as every other unrecognised line. Tracked as follow-up
-//     work, not yet handled here.
+//   - `animverts`/`animtverts` (EE animmesh position/UV keyframes) reuse
+//     `write_transformed_verts`/`write_transformed_tverts` as-is: same
+//     "N vec3 lines" layout as `verts`/`tverts`, no new transform needed.
+//   - `materialname`, `weights`, `constraints` still pass through as
+//     text-only (unchanged from the model's source values), same as every
+//     other unrecognised line. Tracked as follow-up work, not yet handled
+//     here.
 
 mod fit;
 mod transform;
@@ -252,6 +255,21 @@ fn process_model_inner(
                 let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
                 writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
                 write_transformed_verts(&mut lines, &mut out, n, t)?;
+            }
+            // EE animmesh position/UV keyframes: same "N vec3 lines" layout
+            // as verts/tverts, so the existing writers are reused as-is
+            // (no new transform logic -- animverts are positions, animtverts
+            // are UVs on the same texture stage animmesh inherits from
+            // trimesh, so `last_bitmap`/`tbitmap` gating applies the same).
+            "animverts" => {
+                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
+                write_transformed_verts(&mut lines, &mut out, n, t)?;
+            }
+            "animtverts" => {
+                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
+                write_transformed_tverts(&mut lines, &mut out, n, t, &last_bitmap)?;
             }
             "normals" => {
                 let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
