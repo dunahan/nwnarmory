@@ -90,7 +90,15 @@ fn duplicate_targets_in_one_run_are_skipped_and_reported_as_failure() {
 
     assert!(!output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
     assert!(destination.join("same.mdl").exists());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("already reserved in this run"));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    eprintln!("CLI stderr:\n{stderr}");
+
+    assert!(
+        stderr.contains("already reserved in this run"),
+        "Expected notification missing. Actual stderr:\n{stderr}"
+    );
 }
 
 #[test]
