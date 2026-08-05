@@ -8,8 +8,8 @@
 //      Fix: automatically handled by Rust's Result<T, io::Error>.
 //   3. In case of an error mid-processing, a partially written target file
 //      was left behind.
-//      Fix: Write to `<target>.tmp`, atomically rename only on success
-//      (rename is atomic on the same filesystem).
+//      Fix: Write to `<target>.tmp`, then atomically publish it only when
+//      the final target name is still free (never overwrite an existing file).
 //
 // Deliberately NOT fixed / not ported (YAGNI, see CLAUDE.md /
 // Ponytail rules of the accompanying repo):
@@ -118,10 +118,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         print_usage();
         std::process::exit(2);
     }
-    let ini_path = &args[0];
-    let src_arg = &args[1];
-    let dest_dir = PathBuf::from(&args[2]);
+    run_transform(&args[0], &args[1], PathBuf::from(&args[2]), debug, &bitmap_mode)
+}
 
+fn run_transform(
+    ini_path: &str,
+    src_arg: &str,
+    dest_dir: PathBuf,
+    debug: bool,
+    bitmap_mode: &BitmapMode,
+) -> Result<(), Box<dyn std::error::Error>> {
     let ini_text = fs::read_to_string(ini_path)
         .map_err(|e| format!("cannot read INI file '{ini_path}': {e}"))?;
     let transforms = load_transforms(&ini_text, debug)?;
@@ -134,9 +140,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     fs::create_dir_all(&dest_dir)?;
 
-    let mut written: HashSet<PathBuf> = HashSet::new();
+    let mut reserved: HashSet<PathBuf> = HashSet::new();
     let mut processed = 0usize;
     let mut skipped_collisions = 0usize;
+    let mut failed = 0usize;
 
     for src_path in &src_files {
         let stem = src_path
@@ -155,9 +162,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let out_name = build_substitute(&stem, &t.substitute);
             let out_path = dest_dir.join(format!("{out_name}.{ext}"));
 
-            if !written.insert(out_path.clone()) {
+            if path_exists(&out_path)? {
                 eprintln!(
-                    "Warning: Target file '{}' was already written in this run, skipping (from {}).",
+                    "Warning: Target file '{}' already exists, skipping (from {}).",
+                    out_path.display(),
+                    src_path.display()
+                );
+                skipped_collisions += 1;
+                continue;
+            }
+            if !reserved.insert(out_path.clone()) {
+                eprintln!(
+                    "Warning: Target file '{}' is already reserved in this run, skipping (from {}).",
                     out_path.display(),
                     src_path.display()
                 );
@@ -166,8 +182,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             eprintln!("Processing {} -> {}", src_path.display(), out_path.display());
-            if let Err(e) = process_model(src_path, &stem, &out_name, &out_path, t, &bitmap_mode) {
+            if let Err(e) = process_model(src_path, &stem, &out_name, &out_path, t, bitmap_mode) {
                 eprintln!("  Error in {}: {e}", src_path.display());
+                failed += 1;
                 continue;
             }
             processed += 1;
@@ -182,9 +199,22 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     eprintln!(
-        "Done: {processed} file(s) written, {skipped_collisions} skipped due to name collision."
+        "Done: {processed} file(s) written, {skipped_collisions} skipped due to name collision, {failed} file(s) failed."
     );
+    if skipped_collisions > 0 || failed > 0 {
+        return Err(format!(
+            "batch completed with {skipped_collisions} collision(s) and {failed} failure(s)"
+        ).into());
+    }
     Ok(())
+}
+
+fn path_exists(path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("cannot inspect target path '{}': {e}", path.display()).into()),
+    }
 }
 
 fn collect_source_files(src_arg: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
@@ -215,11 +245,31 @@ fn process_model(
     t: &Transform,
     bitmap_mode: &BitmapMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let tmp_path = out_path.with_extension("mdl.tmp");
+    // Check again immediately before writing. The caller preflights collisions,
+    // but this preserves the no-overwrite guarantee when a target appears while
+    // a batch is running.
+    if path_exists(out_path)? {
+        return Err(format!("target file '{}' already exists", out_path.display()).into());
+    }
+
+    let tmp_path = temporary_path(out_path)?;
     let result = process_model_inner(src_path, src_stem, dest_stem, &tmp_path, t, bitmap_mode);
     match result {
         Ok(()) => {
-            fs::rename(&tmp_path, out_path)?;
+            // `rename` overwrites an existing file on Unix. A hard link creates
+            // the destination only if it does not exist, so publishing remains
+            // atomic and never replaces an existing user file.
+            if let Err(e) = fs::hard_link(&tmp_path, out_path) {
+                let _ = fs::remove_file(&tmp_path);
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    return Err(format!("target file '{}' already exists", out_path.display()).into());
+                }
+                return Err(format!(
+                    "cannot publish '{}' without overwriting an existing file: {e}",
+                    out_path.display()
+                ).into());
+            }
+            fs::remove_file(&tmp_path)?;
             Ok(())
         }
         Err(e) => {
@@ -228,6 +278,15 @@ fn process_model(
             Err(e)
         }
     }
+}
+
+fn temporary_path(out_path: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let file_name = out_path
+        .file_name()
+        .ok_or_else(|| format!("target path '{}' has no file name", out_path.display()))?;
+    let mut temporary_name = file_name.to_os_string();
+    temporary_name.push(".tmp");
+    Ok(out_path.with_file_name(temporary_name))
 }
 
 fn process_model_inner(
@@ -239,7 +298,11 @@ fn process_model_inner(
     bitmap_mode: &BitmapMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let reader = BufReader::new(fs::File::open(src_path)?);
-    let mut out = fs::File::create(tmp_path)?;
+    let mut out = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(tmp_path)
+        .map_err(|e| format!("cannot create temporary output '{}': {e}", tmp_path.display()))?;
 
     let mut last_bitmap = String::new();
     let mut lines = reader.lines();
@@ -325,6 +388,7 @@ fn process_model_inner(
         }
     }
     out.flush()?;
+    out.sync_all()?;
     Ok(())
 }
 
