@@ -164,15 +164,6 @@ fn run_transform(
             let out_name = build_substitute(&stem, &t.substitute);
             let out_path = dest_dir.join(format!("{out_name}.{ext}"));
 
-            if path_exists(&out_path)? {
-                eprintln!(
-                    "Warning: Target file '{}' already exists, skipping (from {}).",
-                    out_path.display(),
-                    src_path.display()
-                );
-                skipped_collisions += 1;
-                continue;
-            }
             if !reserved.insert(out_path.clone()) {
                 eprintln!(
                     "Warning: Target file '{}' is already reserved in this run, skipping (from {}).",
@@ -182,6 +173,16 @@ fn run_transform(
                 skipped_collisions += 1;
                 continue;
             }
+            if path_exists(&out_path)? {
+                eprintln!(
+                    "Warning: Target file '{}' already exists, skipping (from {}).",
+                    out_path.display(),
+                    src_path.display()
+                );
+                skipped_collisions += 1;
+                continue;
+            }
+            
 
             eprintln!("Processing {} -> {}", src_path.display(), out_path.display());
             if let Err(e) = process_model(src_path, &stem, &out_name, &out_path, t, bitmap_mode) {
@@ -645,7 +646,7 @@ mod tests {
         assert!(
             error.contains("broken.mdl:2")
                 && error.contains("Block 'verts'")
-                && error.contains("ungültige Anzahl"),
+                && error.contains("invalid quantity"),
             "{error}"
         );
 

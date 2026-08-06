@@ -146,7 +146,7 @@ fn read_geometry(path: &Path) -> Result<Geometry, Box<dyn std::error::Error>> {
         line_no += 1;
         let line = result?;
 
-        let mut it = line.trim_start().split_whitespace();
+        let mut it = line.split_whitespace();
         let keyword = it.next().unwrap_or("").to_lowercase();
 
         match keyword.as_str() {
@@ -434,9 +434,9 @@ fn mat3_mul(a: Mat3, b: Mat3) -> Mat3 {
 }
 fn mat3_transpose(a: Mat3) -> Mat3 {
     let mut out = [[0.0; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            out[j][i] = a[i][j];
+    for (i, row) in a.iter().enumerate() {
+        for (j, &value) in row.iter().enumerate() {
+            out[j][i] = value;
         }
     }
     out

@@ -26,6 +26,7 @@ impl fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 /// A loaded transform section ([s0], [s1], ...).
+#[derive(Debug)]
 pub struct Transform {
     pub match_pat: String,   // already lowercase
     pub substitute: String,  // already lowercase
@@ -46,7 +47,7 @@ pub struct Transform {
     pub position: PositionMode,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum PositionMode {
     /// No position=(...) specified: position is treated like a normal vertex
     /// (Scale/Rotate/Translate, if within min/max).
@@ -260,13 +261,13 @@ fn parse_ini_with_path(
         if line.starts_with('[') {
             let end = line.find(']').ok_or_else(|| {
                 ParseError(format!(
-                    "{path}:{line_no}: block header: unterminierter Header '{line}'"
+                    "{path}:{line_no}: block header: unterminated header '{line}'"
                 ))
             })?;
 
             if !line[end + 1..].trim().is_empty() {
                 return Err(ParseError(format!(
-                    "{path}:{line_no}: block header: unerwarteter Inhalt nach '[...]'"
+                    "{path}:{line_no}: block header: unexpected content after '[...]'"
                 )));
             }
 
@@ -274,7 +275,7 @@ fn parse_ini_with_path(
 
             if name.is_empty() {
                 return Err(ParseError(format!(
-                    "{path}:{line_no}: block header: leerer Section-Name"
+                    "{path}:{line_no}: block header: empty section name"
                 )));
             }
 
@@ -282,7 +283,7 @@ fn parse_ini_with_path(
 
             if sections.contains_key(&current) {
                 return Err(ParseError(format!(
-                    "{path}:{line_no}: Section [{current}]: doppelt definiert"
+                    "{path}:{line_no}: Section [{current}]: defined twice"
                 )));
             }
 
@@ -292,7 +293,7 @@ fn parse_ini_with_path(
 
         let equals = line.find('=').ok_or_else(|| {
             ParseError(format!(
-                "{path}:{line_no}: Section [{current}]: Key/Value ohne '='"
+                "{path}:{line_no}: Section [{current}]: key/value without '='"
             ))
         })?;
 
@@ -300,7 +301,7 @@ fn parse_ini_with_path(
 
         if key.is_empty() {
             return Err(ParseError(format!(
-                "{path}:{line_no}: Section [{current}]: leerer Key"
+                "{path}:{line_no}: Section [{current}]: empty key"
             )));
         }
 
@@ -309,7 +310,7 @@ fn parse_ini_with_path(
 
         if section.contains_key(&key) {
             return Err(ParseError(format!(
-                "{path}:{line_no}: Section [{current}], Key '{key}': doppelt definiert"
+                "{path}:{line_no}: Section [{current}], Key '{key}': defined twice"
             )));
         }
 
@@ -337,7 +338,7 @@ fn parse_tuple(
         .and_then(|value| value.strip_suffix(')'))
         .ok_or_else(|| {
             ParseError(format!(
-                "{path}: Section [{section}], Key '{key}': Tupel erwartet, erhalten '{raw}'"
+                "{path}: Section [{section}], Key '{key}': expected a tuple, got '{raw}'"
             ))
         })?;
 
@@ -349,20 +350,20 @@ fn parse_tuple(
 
             if token.is_empty() {
                 return Err(ParseError(format!(
-                    "{path}: Section [{section}], Key '{key}': leerer Wert an Position {}",
+                    "{path}: Section [{section}], Key '{key}': empty value at position {}",
                     index + 1
                 )));
             }
 
             let value = token.parse::<f32>().map_err(|_| {
                 ParseError(format!(
-                    "{path}: Section [{section}], Key '{key}': ungültige Zahl '{token}'"
+                    "{path}: Section [{section}], Key '{key}': invalid number '{token}'"
                 ))
             })?;
 
             if !value.is_finite() {
                 return Err(ParseError(format!(
-                    "{path}: Section [{section}], Key '{key}': Zahl '{token}' ist nicht endlich"
+                    "{path}: Section [{section}], Key '{key}': number '{token}' is not finite"
                 )));
             }
 
@@ -374,7 +375,7 @@ fn parse_tuple(
 
     if values.len() != expected {
         return Err(ParseError(format!(
-            "{path}: Section [{section}], Key '{key}': {} Werte erwartet, {} erhalten",
+            "{path}: Section [{section}], Key '{key}': expected {} value(s), got {}",
             expected,
             values.len()
         )));
@@ -435,15 +436,7 @@ fn parse_scalar(
     )?[0])
 }
 
-/// Kompatibilitäts-Wrapper für Unit-Tests und direkte Bibliotheksnutzung.
-pub fn load_transforms(
-    ini_text: &str,
-    debug: bool,
-) -> Result<Vec<Transform>, ParseError> {
-    load_transforms_from_path("<memory>", ini_text, debug)
-}
-
-/// Lädt alle [s0]..[sN-1]-Sections anhand von [Global] nTransforms.
+/// Loads all [s0]..[sN-1] sections based on [Global] nTransforms.
 pub fn load_transforms_from_path(
     path: &str,
     ini_text: &str,
@@ -469,24 +462,24 @@ pub fn load_transforms_from_path(
     let sections = parse_ini_with_path(path, ini_text, debug)?;
 
     let global = sections.get("global").ok_or_else(|| {
-        ParseError(format!("{path}: Section [Global]: fehlt"))
+        ParseError(format!("{path}: Section [Global]: missing"))
     })?;
 
     let count_raw = global.get("ntransforms").ok_or_else(|| {
         ParseError(format!(
-            "{path}: Section [Global], Key 'nTransforms': fehlt"
+            "{path}: Section [Global], Key 'nTransforms': missing"
         ))
     })?;
 
     let count: usize = count_raw.parse().map_err(|_| {
         ParseError(format!(
-            "{path}: Section [Global], Key 'nTransforms': ungültige Zahl '{count_raw}'"
+            "{path}: Section [Global], Key 'nTransforms': invalid number '{count_raw}'"
         ))
     })?;
 
     if count == 0 {
         return Err(ParseError(format!(
-            "{path}: Section [Global], Key 'nTransforms': muss größer als 0 sein"
+            "{path}: Section [Global], Key 'nTransforms': must be greater than 0"
         )));
     }
 
@@ -497,7 +490,7 @@ pub fn load_transforms_from_path(
 
         let section = sections.get(&section_name).ok_or_else(|| {
             ParseError(format!(
-                "{path}: Section [{section_name}]: fehlt"
+                "{path}: Section [{section_name}]: missing"
             ))
         })?;
 
@@ -507,7 +500,7 @@ pub fn load_transforms_from_path(
         {
             if debug {
                 eprintln!(
-                    "Warning: {path}: Section [{section_name}], Key '{unknown_key}': unbekannt"
+                    "Warning: {path}: Section [{section_name}], Key '{unknown_key}': unknown"
                 );
             }
         }
@@ -516,14 +509,14 @@ pub fn load_transforms_from_path(
             .get("match")
             .ok_or_else(|| {
                 ParseError(format!(
-                    "{path}: Section [{section_name}], Key 'match': fehlt"
+                    "{path}: Section [{section_name}], Key 'match': missing"
                 ))
             })?
             .to_lowercase();
 
         if match_pat.is_empty() {
             return Err(ParseError(format!(
-                "{path}: Section [{section_name}], Key 'match': darf nicht leer sein"
+                "{path}: Section [{section_name}], Key 'match': must not be empty"
             )));
         }
 
@@ -808,62 +801,9 @@ mod tests {
             error.contains("broken.ini")
                 && error.contains("Section [s0]")
                 && error.contains("Key 'scale'")
-                && error.contains("ungültige Zahl"),
+                && error.contains("invalid number"),
             "{error}"
         );
-    }
-
-    #[test]
-    fn malformed_mdl_header_is_rejected_with_context() {
-        let dir = std::env::temp_dir().join(format!(
-            "nwnarmory-strict-test-{}",
-            std::process::id()
-        ));
-
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-
-        let src = dir.join("broken.mdl");
-        let out = dir.join("broken.tmp");
-
-        fs::write(&src, "newmodel broken\nverts nope\n").unwrap();
-
-        let transform = Transform {
-            match_pat: "broken".into(),
-            substitute: "broken".into(),
-            scale: [1.0; 3],
-            rotate_deg: [0.0; 3],
-            translate: [0.0; 3],
-            min: [-999.0; 3],
-            max: [999.0; 3],
-            tscale: [1.0; 2],
-            trotate_z_deg: 0.0,
-            ttranslate: [0.0; 2],
-            tmin: [-999.0; 2],
-            tmax: [999.0; 2],
-            tbitmap: None,
-            position: PositionMode::LikeVertex,
-        };
-
-        let error = process_model_inner(
-            &src,
-            "broken",
-            "broken",
-            &out,
-            &transform,
-            &BitmapMode::Keep,
-        )
-        .expect_err("invalid block count must fail")
-        .to_string();
-
-        assert!(
-            error.contains("broken.mdl:2")
-                && error.contains("Block 'verts'")
-                && error.contains("ungültige Anzahl"),
-            "{error}"
-        );
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -877,7 +817,7 @@ match=pm??_belt???
 substitute=??a*
 Scale=(0.72, 0.72, 0.72)
 "#;
-        let transforms = load_transforms(ini, false).unwrap();
+        let transforms = load_transforms_from_path("<test>", ini, false).unwrap();
         assert_eq!(transforms.len(), 1);
         assert_eq!(transforms[0].scale, [0.72, 0.72, 0.72]);
     }
