@@ -241,143 +241,392 @@ fn rotate_z(v: Vec3, r: f32) -> Vec3 {
 
 type Section = HashMap<String, String>;
 
-pub fn parse_ini(text: &str, debug: bool) -> HashMap<String, Section> {
+fn parse_ini_with_path(
+    path: &str,
+    text: &str,
+    _debug: bool,
+) -> Result<HashMap<String, Section>, ParseError> {
     let mut sections: HashMap<String, Section> = HashMap::new();
     let mut current = String::from("global");
-    sections.entry(current.clone()).or_default();
 
-    for (lineno, raw_line) in text.lines().enumerate() {
+    for (index, raw_line) in text.lines().enumerate() {
+        let line_no = index + 1;
         let line = raw_line.trim();
+
         if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
             continue;
         }
+
         if line.starts_with('[') {
-            if let Some(end) = line.find(']') {
-                current = line[1..end].trim().to_lowercase();
-                sections.entry(current.clone()).or_default();
+            let end = line.find(']').ok_or_else(|| {
+                ParseError(format!(
+                    "{path}:{line_no}: block header: unterminierter Header '{line}'"
+                ))
+            })?;
+
+            if !line[end + 1..].trim().is_empty() {
+                return Err(ParseError(format!(
+                    "{path}:{line_no}: block header: unerwarteter Inhalt nach '[...]'"
+                )));
             }
+
+            let name = line[1..end].trim();
+
+            if name.is_empty() {
+                return Err(ParseError(format!(
+                    "{path}:{line_no}: block header: leerer Section-Name"
+                )));
+            }
+
+            current = name.to_lowercase();
+
+            if sections.contains_key(&current) {
+                return Err(ParseError(format!(
+                    "{path}:{line_no}: Section [{current}]: doppelt definiert"
+                )));
+            }
+
+            sections.insert(current.clone(), HashMap::new());
             continue;
         }
-        if let Some(eq) = line.find('=') {
-            let key = line[..eq].trim().to_lowercase();
-            let val = line[eq + 1..].trim().to_string();
-            sections.get_mut(&current).unwrap().insert(key, val);
-        } else if debug {
-            // ponytail: no real logging system, a --debug flag is enough
-            // to make silently swallowed lines (missing '=') visible
-            eprintln!(
-                "[error] Line {} in section [{}] ignored (no '='): {}",
-                lineno + 1,
-                current,
-                line
-            );
+
+        let equals = line.find('=').ok_or_else(|| {
+            ParseError(format!(
+                "{path}:{line_no}: Section [{current}]: Key/Value ohne '='"
+            ))
+        })?;
+
+        let key = line[..equals].trim().to_lowercase();
+
+        if key.is_empty() {
+            return Err(ParseError(format!(
+                "{path}:{line_no}: Section [{current}]: leerer Key"
+            )));
         }
+
+        let value = line[equals + 1..].trim().to_string();
+        let section = sections.entry(current.clone()).or_default();
+
+        if section.contains_key(&key) {
+            return Err(ParseError(format!(
+                "{path}:{line_no}: Section [{current}], Key '{key}': doppelt definiert"
+            )));
+        }
+
+        section.insert(key, value);
     }
-    sections
+
+    Ok(sections)
 }
 
-fn get_str<'a>(sec: &'a Section, key: &str, default: &'a str) -> &'a str {
-    sec.get(key).map(|s| s.as_str()).unwrap_or(default)
+fn get_str<'a>(section: &'a Section, key: &str, default: &'a str) -> &'a str {
+    section.get(key).map(|value| value.as_str()).unwrap_or(default)
 }
 
-fn get_int(sec: &Section, key: &str, default: i64) -> i64 {
-    sec.get(key).and_then(|s| s.parse().ok()).unwrap_or(default)
-}
+fn parse_tuple(
+    raw: &str,
+    path: &str,
+    section: &str,
+    key: &str,
+    expected: usize,
+) -> Result<Vec<f32>, ParseError> {
+    let text = raw.trim();
 
-/// Parses "( a , b , c )" -> [a,b,c]. Missing fields become 0.
-fn parse_tuple(s: &str) -> Vec<f32> {
-    s.trim()
-        .trim_start_matches('(')
-        .trim_end_matches(')')
+    let body = text
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+        .ok_or_else(|| {
+            ParseError(format!(
+                "{path}: Section [{section}], Key '{key}': Tupel erwartet, erhalten '{raw}'"
+            ))
+        })?;
+
+    let values: Result<Vec<f32>, ParseError> = body
         .split(',')
-        .filter_map(|p| p.trim().parse::<f32>().ok())
-        .collect()
-}
+        .enumerate()
+        .map(|(index, part)| {
+            let token = part.trim();
 
-fn parse_vec3(sec: &Section, key: &str, default: &str) -> Vec3 {
-    let raw = get_str(sec, key, default);
-    let v = parse_tuple(raw);
-    [
-        v.first().copied().unwrap_or(0.0),
-        v.get(1).copied().unwrap_or(0.0),
-        v.get(2).copied().unwrap_or(0.0),
-    ]
-}
+            if token.is_empty() {
+                return Err(ParseError(format!(
+                    "{path}: Section [{section}], Key '{key}': leerer Wert an Position {}",
+                    index + 1
+                )));
+            }
 
-fn parse_vec2(sec: &Section, key: &str, default: &str) -> [f32; 2] {
-    let raw = get_str(sec, key, default);
-    let v = parse_tuple(raw);
-    [v.first().copied().unwrap_or(0.0), v.get(1).copied().unwrap_or(0.0)]
-}
+            let value = token.parse::<f32>().map_err(|_| {
+                ParseError(format!(
+                    "{path}: Section [{section}], Key '{key}': ungültige Zahl '{token}'"
+                ))
+            })?;
 
-fn parse_scalar(sec: &Section, key: &str, default: &str) -> f32 {
-    let raw = get_str(sec, key, default);
-    parse_tuple(raw).first().copied().unwrap_or(0.0)
-}
+            if !value.is_finite() {
+                return Err(ParseError(format!(
+                    "{path}: Section [{section}], Key '{key}': Zahl '{token}' ist nicht endlich"
+                )));
+            }
 
-/// Loads all [s0]..[sN-1] sections according to [Global] nTransforms.
-pub fn load_transforms(ini_text: &str, debug: bool) -> Result<Vec<Transform>, ParseError> {
-    const TRANSFORM_KEYS: &[&str] = &[
-    "match", "substitute", "scale", "rotate", "translate", "minimum", "maximum",
-    "tscale", "trotate", "ttranslate", "tminimum", "tmaximum", "tbitmap", "position",
-    ];
-    let sections = parse_ini(ini_text, debug);
-    let global = sections
-        .get("global")
-        .ok_or_else(|| ParseError("no [Global] section found in the INI".into()))?;
-    let n = get_int(global, "ntransforms", 0);
-    if n <= 0 {
-        return Err(ParseError("[Global] nTransforms missing or is 0".into()));
+            Ok(value)
+        })
+        .collect();
+
+    let values = values?;
+
+    if values.len() != expected {
+        return Err(ParseError(format!(
+            "{path}: Section [{section}], Key '{key}': {} Werte erwartet, {} erhalten",
+            expected,
+            values.len()
+        )));
     }
 
-    let mut out = Vec::with_capacity(n as usize);
-    for i in 0..n {
-        let key = format!("s{i}");
-        let Some(sec) = sections.get(&key) else { continue };
+    Ok(values)
+}
 
-        let unknown: Vec<&String> = sec.keys().filter(|k| !TRANSFORM_KEYS.contains(&k.as_str())).collect();
-        if !unknown.is_empty() {
-            eprintln!("Warning: [{key}] contains unknown keywords, ignored. Use --debug for details.");
+fn parse_vec3(
+    section: &Section,
+    key: &str,
+    default: &str,
+    path: &str,
+    section_name: &str,
+) -> Result<Vec3, ParseError> {
+    let values = parse_tuple(
+        get_str(section, key, default),
+        path,
+        section_name,
+        key,
+        3,
+    )?;
+
+    Ok([values[0], values[1], values[2]])
+}
+
+fn parse_vec2(
+    section: &Section,
+    key: &str,
+    default: &str,
+    path: &str,
+    section_name: &str,
+) -> Result<[f32; 2], ParseError> {
+    let values = parse_tuple(
+        get_str(section, key, default),
+        path,
+        section_name,
+        key,
+        2,
+    )?;
+
+    Ok([values[0], values[1]])
+}
+
+fn parse_scalar(
+    section: &Section,
+    key: &str,
+    default: &str,
+    path: &str,
+    section_name: &str,
+) -> Result<f32, ParseError> {
+    Ok(parse_tuple(
+        get_str(section, key, default),
+        path,
+        section_name,
+        key,
+        1,
+    )?[0])
+}
+
+/// Kompatibilitäts-Wrapper für Unit-Tests und direkte Bibliotheksnutzung.
+pub fn load_transforms(
+    ini_text: &str,
+    debug: bool,
+) -> Result<Vec<Transform>, ParseError> {
+    load_transforms_from_path("<memory>", ini_text, debug)
+}
+
+/// Lädt alle [s0]..[sN-1]-Sections anhand von [Global] nTransforms.
+pub fn load_transforms_from_path(
+    path: &str,
+    ini_text: &str,
+    debug: bool,
+) -> Result<Vec<Transform>, ParseError> {
+    const TRANSFORM_KEYS: &[&str] = &[
+        "match",
+        "substitute",
+        "scale",
+        "rotate",
+        "translate",
+        "minimum",
+        "maximum",
+        "tscale",
+        "trotate",
+        "ttranslate",
+        "tminimum",
+        "tmaximum",
+        "tbitmap",
+        "position",
+    ];
+
+    let sections = parse_ini_with_path(path, ini_text, debug)?;
+
+    let global = sections.get("global").ok_or_else(|| {
+        ParseError(format!("{path}: Section [Global]: fehlt"))
+    })?;
+
+    let count_raw = global.get("ntransforms").ok_or_else(|| {
+        ParseError(format!(
+            "{path}: Section [Global], Key 'nTransforms': fehlt"
+        ))
+    })?;
+
+    let count: usize = count_raw.parse().map_err(|_| {
+        ParseError(format!(
+            "{path}: Section [Global], Key 'nTransforms': ungültige Zahl '{count_raw}'"
+        ))
+    })?;
+
+    if count == 0 {
+        return Err(ParseError(format!(
+            "{path}: Section [Global], Key 'nTransforms': muss größer als 0 sein"
+        )));
+    }
+
+    let mut transforms = Vec::with_capacity(count);
+
+    for index in 0..count {
+        let section_name = format!("s{index}");
+
+        let section = sections.get(&section_name).ok_or_else(|| {
+            ParseError(format!(
+                "{path}: Section [{section_name}]: fehlt"
+            ))
+        })?;
+
+        for unknown_key in section
+            .keys()
+            .filter(|key| !TRANSFORM_KEYS.contains(&key.as_str()))
+        {
             if debug {
-                for u in &unknown {
-                    eprintln!("  [{key}] {u} = {}", sec[*u]);
-                }
+                eprintln!(
+                    "Warning: {path}: Section [{section_name}], Key '{unknown_key}': unbekannt"
+                );
             }
         }
 
-        let match_pat = get_str(sec, "match", "").to_lowercase();
-        if match_pat.is_empty() {
-            continue; // deactivated section (corresponds to original: match set to "" = skipped)
-        }
-        let substitute = get_str(sec, "substitute", "*").to_lowercase();
+        let match_pat = section
+            .get("match")
+            .ok_or_else(|| {
+                ParseError(format!(
+                    "{path}: Section [{section_name}], Key 'match': fehlt"
+                ))
+            })?
+            .to_lowercase();
 
-        let position_raw = parse_vec3(sec, "position", "( -999.0 , -999.0 , -999.0 )");
-        let position = if position_raw.iter().any(|c| *c > -998.0) {
+        if match_pat.is_empty() {
+            return Err(ParseError(format!(
+                "{path}: Section [{section_name}], Key 'match': darf nicht leer sein"
+            )));
+        }
+
+        let substitute = get_str(section, "substitute", "*").to_lowercase();
+
+        let position_raw = parse_vec3(
+            section,
+            "position",
+            "( -999.0 , -999.0 , -999.0 )",
+            path,
+            &section_name,
+        )?;
+
+        let position = if position_raw.iter().any(|component| *component > -998.0) {
             PositionMode::Absolute(position_raw)
         } else {
             PositionMode::LikeVertex
         };
 
-        let tbitmap = sec.get("tbitmap").filter(|s| !s.is_empty()).map(|s| s.to_lowercase());
+        let tbitmap = section
+            .get("tbitmap")
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_lowercase());
 
-        out.push(Transform {
+        transforms.push(Transform {
             match_pat,
             substitute,
-            scale: parse_vec3(sec, "scale", "( 1.0 , 1.0 , 1.0 )"),
-            rotate_deg: parse_vec3(sec, "rotate", "( 0.0 , 0.0 , 0.0 )"),
-            translate: parse_vec3(sec, "translate", "( 0.0 , 0.0 , 0.0 )"),
-            min: parse_vec3(sec, "minimum", "( -999.0 , -999.0 , -999.0 )"),
-            max: parse_vec3(sec, "maximum", "( 999.0 , 999.0 , 999.0 )"),
-            tscale: parse_vec2(sec, "tscale", "( 1.0 , 1.0 )"),
-            trotate_z_deg: parse_scalar(sec, "trotate", "( 0.0 )"),
-            ttranslate: parse_vec2(sec, "ttranslate", "( 0.0 , 0.0 )"),
-            tmin: parse_vec2(sec, "tminimum", "( -999.0 , -999.0 )"),
-            tmax: parse_vec2(sec, "tmaximum", "( 999.0 , 999.0 )"),
+            scale: parse_vec3(
+                section,
+                "scale",
+                "( 1.0 , 1.0 , 1.0 )",
+                path,
+                &section_name,
+            )?,
+            rotate_deg: parse_vec3(
+                section,
+                "rotate",
+                "( 0.0 , 0.0 , 0.0 )",
+                path,
+                &section_name,
+            )?,
+            translate: parse_vec3(
+                section,
+                "translate",
+                "( 0.0 , 0.0 , 0.0 )",
+                path,
+                &section_name,
+            )?,
+            min: parse_vec3(
+                section,
+                "minimum",
+                "( -999.0 , -999.0 , -999.0 )",
+                path,
+                &section_name,
+            )?,
+            max: parse_vec3(
+                section,
+                "maximum",
+                "( 999.0 , 999.0 , 999.0 )",
+                path,
+                &section_name,
+            )?,
+            tscale: parse_vec2(
+                section,
+                "tscale",
+                "( 1.0 , 1.0 )",
+                path,
+                &section_name,
+            )?,
+            trotate_z_deg: parse_scalar(
+                section,
+                "trotate",
+                "( 0.0 )",
+                path,
+                &section_name,
+            )?,
+            ttranslate: parse_vec2(
+                section,
+                "ttranslate",
+                "( 0.0 , 0.0 )",
+                path,
+                &section_name,
+            )?,
+            tmin: parse_vec2(
+                section,
+                "tminimum",
+                "( -999.0 , -999.0 )",
+                path,
+                &section_name,
+            )?,
+            tmax: parse_vec2(
+                section,
+                "tmaximum",
+                "( 999.0 , 999.0 )",
+                path,
+                &section_name,
+            )?,
             tbitmap,
             position,
         });
     }
-    Ok(out)
+
+    Ok(transforms)
 }
 
 // ---------------------------------------------------------------------
@@ -545,6 +794,76 @@ mod tests {
         // Extra channel: same transform applies regardless of tbitmap.
         let (x, y) = t.apply_tvert_extra(0.5, 0.5).unwrap();
         assert!((x - 1.0).abs() < 1e-5 && (y - 1.0).abs() < 1e-5, "got ({x}, {y})");
+    }
+
+    #[test]
+    fn malformed_ini_tuple_is_rejected_with_section_and_key() {
+        let ini = "[Global]\nnTransforms=1\n[s0]\nmatch=x\nscale=(1, nope, 1)\n";
+
+        let error = load_transforms_from_path("broken.ini", ini, false)
+            .expect_err("malformed tuple must be rejected")
+            .to_string();
+
+        assert!(
+            error.contains("broken.ini")
+                && error.contains("Section [s0]")
+                && error.contains("Key 'scale'")
+                && error.contains("ungültige Zahl"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn malformed_mdl_header_is_rejected_with_context() {
+        let dir = std::env::temp_dir().join(format!(
+            "nwnarmory-strict-test-{}",
+            std::process::id()
+        ));
+
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("broken.mdl");
+        let out = dir.join("broken.tmp");
+
+        fs::write(&src, "newmodel broken\nverts nope\n").unwrap();
+
+        let transform = Transform {
+            match_pat: "broken".into(),
+            substitute: "broken".into(),
+            scale: [1.0; 3],
+            rotate_deg: [0.0; 3],
+            translate: [0.0; 3],
+            min: [-999.0; 3],
+            max: [999.0; 3],
+            tscale: [1.0; 2],
+            trotate_z_deg: 0.0,
+            ttranslate: [0.0; 2],
+            tmin: [-999.0; 2],
+            tmax: [999.0; 2],
+            tbitmap: None,
+            position: PositionMode::LikeVertex,
+        };
+
+        let error = process_model_inner(
+            &src,
+            "broken",
+            "broken",
+            &out,
+            &transform,
+            &BitmapMode::Keep,
+        )
+        .expect_err("invalid block count must fail")
+        .to_string();
+
+        assert!(
+            error.contains("broken.mdl:2")
+                && error.contains("Block 'verts'")
+                && error.contains("ungültige Anzahl"),
+            "{error}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

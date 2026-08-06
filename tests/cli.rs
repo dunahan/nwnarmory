@@ -116,7 +116,13 @@ fn malformed_model_leaves_no_output_or_temporary_file() {
     assert!(!output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
     assert!(!destination.join("source.mdl").exists());
     assert!(!destination.join("source.mdl.tmp").exists());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("unexpected EOF in verts block"));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("Block 'verts': unexpected end of file"),
+        "Expected strict EOF diagnostic missing. Actual stderr:\n{stderr}"
+    );
 }
 
 #[test]

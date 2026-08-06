@@ -135,55 +135,116 @@ fn print_position(src: &Geometry, tgt: &Geometry) {
 // ---------------------------------------------------------------------
 
 fn read_geometry(path: &Path) -> Result<Geometry, Box<dyn std::error::Error>> {
-    let file = fs::File::open(path).map_err(|e| format!("cannot read '{}': {e}", path.display()))?;
+    let file = fs::File::open(path)
+        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+
     let mut lines = BufReader::new(file).lines();
     let mut geo = Geometry::default();
+    let mut line_no = 0usize;
 
-    while let Some(line) = lines.next() {
-        let line = line?;
-        let trimmed = line.trim_start();
-        let mut it = trimmed.split_whitespace();
+    while let Some(result) = lines.next() {
+        line_no += 1;
+        let line = result?;
+
+        let mut it = line.trim_start().split_whitespace();
         let keyword = it.next().unwrap_or("").to_lowercase();
 
         match keyword.as_str() {
-            "verts" => {
-                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                read_block(&mut lines, n, |vals| {
-                    if vals.len() >= 3 {
-                        geo.verts.push([vals[0], vals[1], vals[2]]);
+            "verts" | "tverts" => {
+                let block = keyword.as_str();
+
+                let raw_count = it.next().ok_or_else(|| {
+                    format!(
+                        "{}:{}: Block '{}': Count missing",
+                        path.display(),
+                        line_no,
+                        block
+                    )
+                })?;
+
+                let count: usize = raw_count.parse().map_err(|_| {
+                    format!(
+                        "{}:{}: Block '{}': invalid count '{}'",
+                        path.display(),
+                        line_no,
+                        block,
+                        raw_count
+                    )
+                })?;
+
+                let needed = if block == "verts" { 3 } else { 2 };
+
+                for _ in 0..count {
+                    line_no += 1;
+
+                    let item = lines.next().ok_or_else(|| {
+                        format!(
+                            "{}:{}: Block '{}': unexpected end of file",
+                            path.display(),
+                            line_no,
+                            block
+                        )
+                    })??;
+
+                    let values: Result<Vec<f64>, _> =
+                        item.split_whitespace().map(str::parse).collect();
+
+                    let values = values.map_err(|_| {
+                        format!(
+                            "{}:{}: Block '{}': invalid number",
+                            path.display(),
+                            line_no,
+                            block
+                        )
+                    })?;
+
+                    if values.len() < needed || values.iter().any(|value| !value.is_finite()) {
+                        return Err(format!(
+                            "{}:{}: Block '{}': at least {} finite numbers expected",
+                            path.display(),
+                            line_no,
+                            block,
+                            needed
+                        )
+                        .into());
                     }
-                });
-            }
-            "tverts" => {
-                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                read_block(&mut lines, n, |vals| {
-                    if vals.len() >= 2 {
-                        geo.tverts.push([vals[0], vals[1]]);
+
+                    if block == "verts" {
+                        geo.verts.push([values[0], values[1], values[2]]);
+                    } else {
+                        geo.tverts.push([values[0], values[1]]);
                     }
-                });
-            }
-            "position" => {
-                let vals: Vec<f64> = it.filter_map(|s| s.parse().ok()).collect();
-                if vals.len() >= 3 {
-                    geo.positions.push([vals[0], vals[1], vals[2]]);
                 }
             }
+
+            "position" => {
+                let values: Result<Vec<f64>, _> = it.map(str::parse).collect();
+
+                let values = values.map_err(|_| {
+                    format!(
+                        "{}:{}: Block 'position': invalid number",
+                        path.display(),
+                        line_no
+                    )
+                })?;
+
+                if values.len() != 3 || values.iter().any(|value| !value.is_finite()) {
+                    return Err(format!(
+                        "{}:{}: Block 'position': exactly 3 finite numbers expected",
+                        path.display(),
+                        line_no
+                    )
+                    .into());
+                }
+
+                geo.positions.push([values[0], values[1], values[2]]);
+            }
+
             _ => {}
         }
     }
-    Ok(geo)
-}
 
-fn read_block(
-    lines: &mut std::io::Lines<BufReader<fs::File>>,
-    n: usize,
-    mut push: impl FnMut(Vec<f64>),
-) {
-    for _ in 0..n {
-        let Some(Ok(line)) = lines.next() else { break };
-        let vals: Vec<f64> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
-        push(vals);
-    }
+    Ok(geo)
 }
 
 // ---------------------------------------------------------------------

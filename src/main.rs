@@ -45,7 +45,9 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use transform::{build_substitute, load_transforms, wildcard_match, PositionMode, Transform};
+use transform::{
+    build_substitute, load_transforms_from_path, wildcard_match, PositionMode, Transform, Vec3,
+};
 
 fn main() {
     if let Err(e) = run() {
@@ -130,7 +132,7 @@ fn run_transform(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ini_text = fs::read_to_string(ini_path)
         .map_err(|e| format!("cannot read INI file '{ini_path}': {e}"))?;
-    let transforms = load_transforms(&ini_text, debug)?;
+    let transforms = load_transforms_from_path(ini_path, &ini_text, debug)?;
     eprintln!("{} transform rules loaded.", transforms.len());
 
     let src_files = collect_source_files(src_arg)?;
@@ -289,6 +291,95 @@ fn temporary_path(out_path: &Path) -> Result<PathBuf, Box<dyn std::error::Error>
     Ok(out_path.with_file_name(temporary_name))
 }
 
+fn model_error(
+    path: &Path,
+    line: usize,
+    block: &str,
+    message: &str,
+) -> Box<dyn std::error::Error> {
+    format!("{}:{}: Block '{}': {}", path.display(), line, block, message).into()
+}
+
+fn parse_block_count(
+    path: &Path,
+    line_no: usize,
+    block: &str,
+    token: Option<&str>,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let raw = token.ok_or_else(|| model_error(path, line_no, block, "Quantity missing"))?;
+
+    raw.parse::<usize>().map_err(|_| {
+        model_error(
+            path,
+            line_no,
+            block,
+            &format!("invalid quantity '{raw}'"),
+        )
+    })
+}
+
+fn parse_numbers(
+    path: &Path,
+    line_no: usize,
+    block: &str,
+    line: &str,
+    expected: usize,
+) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let values: Result<Vec<f32>, _> = line
+        .split_whitespace()
+        .map(|token| token.parse::<f32>())
+        .collect();
+
+    let values = values.map_err(|_| {
+        model_error(
+            path,
+            line_no,
+            block,
+            &format!("invalid number in '{line}'"),
+        )
+    })?;
+
+    if values.len() != expected || values.iter().any(|value| !value.is_finite()) {
+        return Err(model_error(
+            path,
+            line_no,
+            block,
+            &format!(
+                "{} numbers expected, received {}",
+                expected,
+                values.len()
+            ),
+        ));
+    }
+
+    Ok(values)
+}
+
+fn next_block_line(
+    lines: &mut std::io::Lines<BufReader<fs::File>>,
+    line_no: &mut usize,
+    path: &Path,
+    block: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    *line_no += 1;
+
+    match lines.next() {
+        Some(Ok(line)) => Ok(line),
+        Some(Err(error)) => Err(model_error(
+            path,
+            *line_no,
+            block,
+            &format!("Reading error: {error}"),
+        )),
+        None => Err(model_error(
+            path,
+            *line_no,
+            block,
+            "unexpected end of file",
+        )),
+    }
+}
+
 fn process_model_inner(
     src_path: &Path,
     src_stem: &str,
@@ -298,233 +389,184 @@ fn process_model_inner(
     bitmap_mode: &BitmapMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let reader = BufReader::new(fs::File::open(src_path)?);
+
     let mut out = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(tmp_path)
-        .map_err(|e| format!("cannot create temporary output '{}': {e}", tmp_path.display()))?;
+        .map_err(|error| {
+            format!(
+                "cannot create temporary output '{}': {error}",
+                tmp_path.display()
+            )
+        })?;
 
     let mut last_bitmap = String::new();
     let mut lines = reader.lines();
+    let mut line_no = 0usize;
 
-    while let Some(line) = lines.next() {
-        let line = line?;
+    while let Some(result) = lines.next() {
+        line_no += 1;
+        let line = result?;
+
         let trimmed = line.trim_start();
         let mut it = trimmed.split_whitespace();
         let keyword = it.next().unwrap_or("").to_lowercase();
 
         match keyword.as_str() {
-            "verts" => {
-                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+            "verts"
+            | "animverts"
+            | "normals"
+            | "tangents"
+            | "tverts"
+            | "animtverts"
+            | "tverts1"
+            | "tverts2"
+            | "tverts3" => {
+                let block = keyword.as_str();
+                let count = parse_block_count(src_path, line_no, block, it.next())?;
+
                 writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
-                write_transformed_verts(&mut lines, &mut out, n, t)?;
-            }
-            // EE animmesh position/UV keyframes: same "N vec3 lines" layout
-            // as verts/tverts, so the existing writers are reused as-is
-            // (no new transform logic -- animverts are positions, animtverts
-            // are UVs on the same texture stage animmesh inherits from
-            // trimesh, so `last_bitmap`/`tbitmap` gating applies the same).
-            "animverts" => {
-                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
-                write_transformed_verts(&mut lines, &mut out, n, t)?;
-            }
-            "animtverts" => {
-                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
-                write_transformed_tverts(&mut lines, &mut out, n, t, &last_bitmap)?;
-            }
-            "normals" => {
-                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
-                write_transformed_normals(&mut lines, &mut out, n, t)?;
-            }
-            "tangents" => {
-                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
-                write_transformed_tangents(&mut lines, &mut out, n, t)?;
-            }
-            "tverts" => {
-                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
-                write_transformed_tverts(&mut lines, &mut out, n, t, &last_bitmap)?;
-            }
-            "tverts1" | "tverts2" | "tverts3" => {
-                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
-                write_transformed_tverts_extra(&mut lines, &mut out, n, t)?;
-            }
-            "bitmap" => {
-                if let Some(name) = it.next() {
-                    last_bitmap = name.to_lowercase();
+
+                let extra_uv = matches!(block, "tverts1" | "tverts2" | "tverts3");
+                let uv = matches!(
+                    block,
+                    "tverts" | "animtverts" | "tverts1" | "tverts2" | "tverts3"
+                );
+                let normal = block == "normals";
+                let tangent = block == "tangents";
+                let expected_values = if tangent { 4 } else { 3 };
+
+                for _ in 0..count {
+                    let item_line =
+                        next_block_line(&mut lines, &mut line_no, src_path, block)?;
+                    let values = parse_numbers(
+                        src_path,
+                        line_no,
+                        block,
+                        &item_line,
+                        expected_values,
+                    )?;
+
+                    if normal {
+                        write_vec3(
+                            &mut out,
+                            t.apply_normal([values[0], values[1], values[2]]),
+                            &item_line,
+                        )?;
+                    } else if tangent {
+                        match t.apply_normal([values[0], values[1], values[2]]) {
+                            Some(value) => writeln!(
+                                out,
+                                "    {:.7} {:.7} {:.7} {:.7}",
+                                value[0], value[1], value[2], values[3]
+                            )?,
+                            None => writeln!(out, "{item_line}")?,
+                        }
+                    } else if uv {
+                        let transformed = if extra_uv {
+                            t.apply_tvert_extra(values[0], values[1])
+                        } else {
+                            t.apply_tvert(values[0], values[1], &last_bitmap)
+                        };
+
+                        match transformed {
+                            Some((x, y)) => {
+                                writeln!(
+                                    out,
+                                    "    {:.7} {:.7} {:.7}",
+                                    x, y, values[2]
+                                )?
+                            }
+                            None => writeln!(out, "{item_line}")?,
+                        }
+                    } else {
+                        match t.apply_vertex([values[0], values[1], values[2]]) {
+                            Some(value) => writeln!(
+                                out,
+                                "    {:.7} {:.7} {:.7}",
+                                value[0], value[1], value[2]
+                            )?,
+                            None => writeln!(out, "{item_line}")?,
+                        }
+                    }
                 }
+            }
+
+            "bitmap" => {
+                let name = it.next().ok_or_else(|| {
+                    model_error(src_path, line_no, "bitmap", "Key/Value missing")
+                })?;
+
+                last_bitmap = name.to_lowercase();
+
                 let indent = &line[..line.len() - trimmed.len()];
                 let out_line = match bitmap_mode {
                     BitmapMode::Keep => line.clone(),
-                    BitmapMode::RenameToModel => replace_no_case(&line, src_stem, dest_stem),
+                    BitmapMode::RenameToModel => {
+                        replace_no_case(&line, src_stem, dest_stem)
+                    }
                     BitmapMode::RenameTo(name) => format!("{indent}bitmap {name}"),
                 };
+
                 writeln!(out, "{out_line}")?;
             }
+
             "position" => {
-                let vals: Vec<f32> = it.filter_map(|s| s.parse().ok()).collect();
-                let parsed = [
-                    vals.first().copied().unwrap_or(0.0),
-                    vals.get(1).copied().unwrap_or(0.0),
-                    vals.get(2).copied().unwrap_or(0.0),
-                ];
-                let new_pos = match t.position {
-                    PositionMode::Absolute(p) => p,
+                let raw_values = it.collect::<Vec<_>>().join(" ");
+                let values = parse_numbers(
+                    src_path,
+                    line_no,
+                    "position",
+                    &raw_values,
+                    3,
+                )?;
+
+                let parsed = [values[0], values[1], values[2]];
+
+                let position = match t.position {
+                    PositionMode::Absolute(position) => position,
                     PositionMode::LikeVertex => t.apply_vertex(parsed).unwrap_or(parsed),
                 };
-                writeln!(out, "  position {:.7} {:.7} {:.7}", new_pos[0], new_pos[1], new_pos[2])?;
+
+                writeln!(
+                    out,
+                    "  position {:.7} {:.7} {:.7}",
+                    position[0], position[1], position[2]
+                )?;
             }
+
             "filedependancy" | "filedependency" => {
                 writeln!(out, "{line}")?;
             }
+
             _ => {
                 writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
             }
         }
     }
+
     out.flush()?;
+
     out.sync_all()?;
+
     Ok(())
 }
 
-fn write_transformed_verts(
-    lines: &mut std::io::Lines<BufReader<fs::File>>,
+fn write_vec3(
     out: &mut fs::File,
-    n: usize,
-    t: &Transform,
+    value: Option<Vec3>,
+    original: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for _ in 0..n {
-        let Some(line) = lines.next() else {
-            return Err("unexpected EOF in verts block".into());
-        };
-        let line = line?;
-        let vals: Vec<f32> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
-        if vals.len() < 3 {
-            writeln!(out, "{line}")?;
-            continue;
-        }
-        let v = [vals[0], vals[1], vals[2]];
-        match t.apply_vertex(v) {
-            Some(p) => writeln!(out, "    {:.7} {:.7} {:.7}", p[0], p[1], p[2])?,
-            None => writeln!(out, "{line}")?,
-        }
+    match value {
+        Some(value) => writeln!(
+            out,
+            "    {:.7} {:.7} {:.7}",
+            value[0], value[1], value[2]
+        )?,
+        None => writeln!(out, "{original}")?,
     }
-    Ok(())
-}
 
-/// Transforms an EE `normals N` block. Direction vectors, so this uses
-/// `apply_normal` (inverse-transpose of Scale/Rotate) instead of
-/// `apply_vertex` -- see the doc comment on `Transform::apply_normal`.
-fn write_transformed_normals(
-    lines: &mut std::io::Lines<BufReader<fs::File>>,
-    out: &mut fs::File,
-    n: usize,
-    t: &Transform,
-) -> Result<(), Box<dyn std::error::Error>> {
-    for _ in 0..n {
-        let Some(line) = lines.next() else {
-            return Err("unexpected EOF in normals block".into());
-        };
-        let line = line?;
-        let vals: Vec<f32> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
-        if vals.len() < 3 {
-            writeln!(out, "{line}")?;
-            continue;
-        }
-        let v = [vals[0], vals[1], vals[2]];
-        match t.apply_normal(v) {
-            Some(p) => writeln!(out, "    {:.7} {:.7} {:.7}", p[0], p[1], p[2])?,
-            None => writeln!(out, "{line}")?,
-        }
-    }
-    Ok(())
-}
-
-/// Transforms an EE `tangents N` block. Each line is `x y z w`, where xyz is
-/// a direction vector (same treatment as `normals`, via `apply_normal`) and
-/// w is the +-1 handedness sign, which is untouched by Scale/Rotate and so
-/// carried through unchanged.
-fn write_transformed_tangents(
-    lines: &mut std::io::Lines<BufReader<fs::File>>,
-    out: &mut fs::File,
-    n: usize,
-    t: &Transform,
-) -> Result<(), Box<dyn std::error::Error>> {
-    for _ in 0..n {
-        let Some(line) = lines.next() else {
-            return Err("unexpected EOF in tangents block".into());
-        };
-        let line = line?;
-        let vals: Vec<f32> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
-        if vals.len() < 4 {
-            writeln!(out, "{line}")?;
-            continue;
-        }
-        let v = [vals[0], vals[1], vals[2]];
-        let w = vals[3];
-        match t.apply_normal(v) {
-            Some(p) => writeln!(out, "    {:.7} {:.7} {:.7} {:.7}", p[0], p[1], p[2], w)?,
-            None => writeln!(out, "{line}")?,
-        }
-    }
-    Ok(())
-}
-
-fn write_transformed_tverts(
-    lines: &mut std::io::Lines<BufReader<fs::File>>,
-    out: &mut fs::File,
-    n: usize,
-    t: &Transform,
-    last_bitmap: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    for _ in 0..n {
-        let Some(line) = lines.next() else {
-            return Err("unexpected EOF in tverts block".into());
-        };
-        let line = line?;
-        let vals: Vec<f32> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
-        if vals.len() < 2 {
-            writeln!(out, "{line}")?;
-            continue;
-        }
-        match t.apply_tvert(vals[0], vals[1], last_bitmap) {
-            Some((x, y)) => writeln!(out, "    {:.7} {:.7} {:.7}", x, y, 0.0)?,
-            None => writeln!(out, "{line}")?,
-        }
-    }
-    Ok(())
-}
-
-/// Transforms an EE `tverts1`/`tverts2`/`tverts3` block (lightmap / extra UV
-/// channels). Same TScale/TRotate/TTranslate math as the primary `tverts`
-/// channel via `apply_tvert_extra`, but without `tbitmap` gating -- see the
-/// doc comment on `Transform::apply_tvert_extra` for why.
-fn write_transformed_tverts_extra(
-    lines: &mut std::io::Lines<BufReader<fs::File>>,
-    out: &mut fs::File,
-    n: usize,
-    t: &Transform,
-) -> Result<(), Box<dyn std::error::Error>> {
-    for _ in 0..n {
-        let Some(line) = lines.next() else {
-            return Err("unexpected EOF in tverts1/2/3 block".into());
-        };
-        let line = line?;
-        let vals: Vec<f32> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
-        if vals.len() < 2 {
-            writeln!(out, "{line}")?;
-            continue;
-        }
-        match t.apply_tvert_extra(vals[0], vals[1]) {
-            Some((x, y)) => writeln!(out, "    {:.7} {:.7} {:.7}", x, y, 0.0)?,
-            None => writeln!(out, "{line}")?,
-        }
-    }
     Ok(())
 }
 
@@ -555,5 +597,58 @@ mod tests {
     #[test]
     fn replace_no_case_basic() {
         assert_eq!(replace_no_case("bitmap PM01_BELT001", "pm01_belt001", "pm01a_belt001"), "bitmap pm01a_belt001");
+    }
+    
+    #[test]
+    fn malformed_mdl_header_is_rejected_with_context() {
+        let dir = std::env::temp_dir().join(format!(
+            "nwnarmory-strict-test-{}",
+            std::process::id()
+        ));
+
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("broken.mdl");
+        let out = dir.join("broken.tmp");
+
+        fs::write(&src, "newmodel broken\nverts nope\n").unwrap();
+
+        let transform = Transform {
+            match_pat: "broken".into(),
+            substitute: "broken".into(),
+            scale: [1.0; 3],
+            rotate_deg: [0.0; 3],
+            translate: [0.0; 3],
+            min: [-999.0; 3],
+            max: [999.0; 3],
+            tscale: [1.0; 2],
+            trotate_z_deg: 0.0,
+            ttranslate: [0.0; 2],
+            tmin: [-999.0; 2],
+            tmax: [999.0; 2],
+            tbitmap: None,
+            position: PositionMode::LikeVertex,
+        };
+
+        let error = process_model_inner(
+            &src,
+            "broken",
+            "broken",
+            &out,
+            &transform,
+            &BitmapMode::Keep,
+        )
+        .expect_err("invalid block count must fail")
+        .to_string();
+
+        assert!(
+            error.contains("broken.mdl:2")
+                && error.contains("Block 'verts'")
+                && error.contains("ungültige Anzahl"),
+            "{error}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
