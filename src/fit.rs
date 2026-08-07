@@ -31,13 +31,84 @@ struct Geometry {
     positions: Vec<[f64; 3]>,
 }
 
+/// Returns the lowercase model stem used by `match` and `substitute`.
+fn model_stem(path: &str) -> Result<String, Box<dyn std::error::Error>> {
+    Path::new(path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .map(str::to_lowercase)
+        .ok_or_else(|| format!("cannot determine a model name from '{path}'").into())
+}
+
+/// Derives the compact wildcard pair used by the stock NWNArmory INI.
+///
+/// The part before the first '_' is the race/phenotype identifier. Once a
+/// difference occurs there, the remainder of that identifier is variable
+/// (`pm??`, `pf??`, ...). Numeric characters in the model-piece suffix are
+/// also variable (`chest???`, `belt???`, ...). The substitute keeps the
+/// source prefix with `?`, writes the changed target portion, and uses `*` to
+/// carry the unchanged remainder through, e.g. `pm01_chest001` -> `pma1...`
+/// yields `match=pm??_chest???` and `substitute=??a*`.
+fn model_patterns(source: &str, target: &str) -> (String, String) {
+    let src: Vec<char> = source.chars().collect();
+    let tgt: Vec<char> = target.chars().collect();
+    let separator = src.iter().position(|c| *c == '_');
+
+    let (match_pattern, substitute) = match (separator, tgt.iter().position(|c| *c == '_')) {
+        (Some(src_sep), Some(tgt_sep)) if src_sep == tgt_sep && src.len() == tgt.len() => {
+            let differences: Vec<usize> = (0..src_sep).filter(|i| src[*i] != tgt[*i]).collect();
+            let (wild_start, wild_end) = if let Some(first) = differences.first() {
+                (*first, src_sep)
+            } else {
+                let digits: Vec<usize> =
+                    (0..src_sep).filter(|i| src[*i].is_ascii_digit()).collect();
+                match (digits.first(), digits.last()) {
+                    (Some(first), Some(last)) => (*first, last + 1),
+                    _ => (src_sep, src_sep),
+                }
+            };
+
+            let mut head = String::new();
+            head.extend(src[..wild_start].iter());
+            head.extend(std::iter::repeat_n('?', wild_end - wild_start));
+
+            let mut suffix = String::new();
+            for c in &src[src_sep..] {
+                suffix.push(if c.is_ascii_digit() { '?' } else { *c });
+            }
+            head.push_str(&suffix);
+
+            let substitute =
+                if let (Some(first), Some(last)) = (differences.first(), differences.last()) {
+                    let mut value = "?".repeat(*first);
+                    value.extend(tgt[*first..=*last].iter());
+                    value.push('*');
+                    value
+                } else {
+                    target.to_string()
+                };
+            (head, substitute)
+        }
+        _ => (source.to_string(), target.to_string()),
+    };
+
+    (match_pattern, substitute)
+}
+
 /// Entry point for `nwnarmory --values <source.mdl> <target.mdl>`.
 pub fn run_values(source_path: &str, target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let src = read_geometry(Path::new(source_path))?;
     let tgt = read_geometry(Path::new(target_path))?;
+    let source_stem = model_stem(source_path)?;
+    let target_stem = model_stem(target_path)?;
 
     println!("; computed from {} -> {}", source_path, target_path);
     println!("; paste the lines you want into a transforms.ini [sN] section");
+    let (match_pattern, substitute) = model_patterns(&source_stem, &target_stem);
+    println!("; wildcard model-name mapping inferred from the two file names");
+    println!("match={match_pattern}");
+    println!("substitute={substitute}");
     println!();
 
     print_vertex_fit(&src, &tgt);
@@ -616,5 +687,21 @@ mod tests {
         assert!((got_rot - trot_deg).abs() < 1e-4);
         assert!((t2[0] - ttrans[0]).abs() < 1e-6);
         assert!((t2[1] - ttrans[1]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn model_stem_is_lowercase_and_without_extension() {
+        assert_eq!(
+            model_stem("Models/PMH0_Chest001.MDL").unwrap(),
+            "pmh0_chest001"
+        );
+        assert_eq!(model_stem("pfa0_chest001.mdl").unwrap(), "pfa0_chest001");
+    }
+
+    #[test]
+    fn model_patterns_follow_stock_ini_wildcards() {
+        let patterns = model_patterns("pm01_chest001", "pma1_chest001");
+        assert_eq!(patterns.0, "pm??_chest???");
+        assert_eq!(patterns.1, "??a*");
     }
 }
