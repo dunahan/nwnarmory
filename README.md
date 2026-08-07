@@ -1,5 +1,7 @@
 # NWNArmory
 
+**Current release: 1.3.1**
+
 **A Neverwinter Nights Model Rescaling CLI Tool**
 
 NWNArmory is a command-line interface (CLI) tool designed to automatically resize and transform standard Neverwinter Nights (NWN) 3D ASCII `.mdl` models into variants suitable for other playable races (Halfling, Dwarf, Elf, Gnome, Half-orc). 
