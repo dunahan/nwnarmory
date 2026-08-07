@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-08-07
+
+### Added
+- **Wildcard model-name mapping in `--values` / `-v`:** The fit mode now derives and prints `match=` and `substitute=` lines from the source and target model names, following the wildcard style used by the standard NWNArmory INI.
+
+### Documentation
+- **Verification note for generated mappings:** The README now explains that inferred wildcard patterns must be checked before use because they can match additional models beyond the two input files.
+
 ## [1.3.1] - 2026-08-07
 
 ### Added
