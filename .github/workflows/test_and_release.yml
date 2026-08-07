@@ -43,10 +43,10 @@ jobs:
       run: cargo fmt --all -- --check
 
     - name: Run clippy
-      run: cargo clippy --all-targets --locked -- -D warnings
+      run: cargo clippy --all-targets --offline -- -D warnings
 
     - name: Run tests
-      run: cargo test --locked --verbose
+      run: cargo test --offline --verbose
 
   # JOB 2: Checks the Cargo.toml version AND extracts the changelog
   check-version:
@@ -134,7 +134,7 @@ jobs:
       uses: swatinem/rust-cache@v2
 
     - name: Create release build
-      run: cargo build --release --locked
+      run: cargo build --release --offline
 
     - name: Packaging (Windows)
       if: matrix.os == 'windows-latest'
