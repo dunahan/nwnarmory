@@ -11,7 +11,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: nwnarmory-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   # JOB 1: Testing
@@ -39,10 +43,10 @@ jobs:
       run: cargo fmt --all -- --check
 
     - name: Run clippy
-      run: cargo clippy --all-targets -- -D warnings
+      run: cargo clippy --all-targets --locked -- -D warnings
 
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --locked --verbose
 
   # JOB 2: Checks the Cargo.toml version AND extracts the changelog
   check-version:
@@ -53,7 +57,6 @@ jobs:
     outputs:
       version: ${{ steps.extract.outputs.version }}
       is_new: ${{ steps.check_tag.outputs.is_new }}
-      notes: ${{ steps.changelog.outputs.notes }}   # Saves Changelog text
     steps:
     - name: Check out code
       uses: actions/checkout@v7
@@ -79,17 +82,29 @@ jobs:
         fi
 
     - name: Extract changelog for release notes
-      id: changelog
       if: steps.check_tag.outputs.is_new == 'true'
       run: |
         VERSION="${{ steps.extract.outputs.version }}"
-        
-        awk "/^## $VERSION/{flag=1; next} /^## /{flag=0} flag" CHANGELOG.md > release_notes.txt
-        
-        EOF=$(openssl rand -hex 8)
-        echo "notes<<$EOF" >> $GITHUB_OUTPUT
-        cat release_notes.txt >> $GITHUB_OUTPUT
-        echo "$EOF" >> $GITHUB_OUTPUT
+
+        if ! grep -qE "^## \[$VERSION\]" CHANGELOG.md; then
+          echo "::error::CHANGELOG.md has no release section for [$VERSION]"
+          exit 1
+        fi
+
+        awk "/^## \[$VERSION\]/{flag=1; next} /^## /{flag=0} flag" \
+          CHANGELOG.md > release_notes.txt
+
+        if [ ! -s release_notes.txt ]; then
+          echo "::error::Release notes for [$VERSION] are empty"
+          exit 1
+        fi
+
+    - name: Upload release notes
+      if: steps.check_tag.outputs.is_new == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-notes
+        path: release_notes.txt
 
   # JOB 3: Build (Only creates the files and uploads them as an artifact)
   build:
@@ -102,11 +117,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: ${{ github.event.repository.name }}
-            asset_name: ${{ github.event.repository.name }}-linux.tar.gz
+            artifact_name: nwnarmory
+            asset_name: nwnarmory-linux.tar.gz
           - os: windows-latest
-            artifact_name: ${{ github.event.repository.name }}.exe
-            asset_name: ${{ github.event.repository.name }}-windows.zip
+            artifact_name: nwnarmory.exe
+            asset_name: nwnarmory-windows.zip
 
     steps:
     - name: Check out code
@@ -119,7 +134,7 @@ jobs:
       uses: swatinem/rust-cache@v2
 
     - name: Create release build
-      run: cargo build --release
+      run: cargo build --release --locked
 
     - name: Packaging (Windows)
       if: matrix.os == 'windows-latest'
@@ -141,6 +156,8 @@ jobs:
   # JOB 4: Publish Release (Runs only once and bundles the package)
   publish-release:
     name: Publish GitHub Release
+    permissions:
+      contents: write
     needs: [check-version, build]
     runs-on: ubuntu-latest
     steps:
@@ -151,13 +168,26 @@ jobs:
           merge-multiple: true
           path: release-assets
 
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: release-assets
+
+      - name: Create SHA-256 checksums
+        run: |
+          cd release-assets
+          sha256sum nwnarmory-* > SHA256SUMS.txt
+
       - name: Automatically create a GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: "v${{ needs.check-version.outputs.version }}"
           name: "Release v${{ needs.check-version.outputs.version }}"
-          body: ${{ needs.check-version.outputs.notes }}
-          files: release-assets/*
-          generate_release_notes: true 
+          body_path: release-assets/release_notes.txt
+          files: |
+            release-assets/nwnarmory-*
+            release-assets/SHA256SUMS.txt
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
