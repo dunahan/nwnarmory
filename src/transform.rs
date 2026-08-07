@@ -28,8 +28,8 @@ impl std::error::Error for ParseError {}
 /// A loaded transform section ([s0], [s1], ...).
 #[derive(Debug)]
 pub struct Transform {
-    pub match_pat: String,   // already lowercase
-    pub substitute: String,  // already lowercase
+    pub match_pat: String,  // already lowercase
+    pub substitute: String, // already lowercase
 
     pub scale: Vec3,
     pub rotate_deg: Vec3,
@@ -62,16 +62,21 @@ impl Transform {
         no_scale(self.scale) && no_rot(self.rotate_deg) && no_trans(self.translate)
     }
     fn is_just_tcopy(&self) -> bool {
-        self.tscale[0] > 0.9999 && self.tscale[0] < 1.0001
-            && self.tscale[1] > 0.9999 && self.tscale[1] < 1.0001
+        self.tscale[0] > 0.9999
+            && self.tscale[0] < 1.0001
+            && self.tscale[1] > 0.9999
+            && self.tscale[1] < 1.0001
             && self.trotate_z_deg.abs() < 0.0001
             && self.ttranslate[0].abs() < 0.0001
             && self.ttranslate[1].abs() < 0.0001
     }
     fn in_range(&self, v: Vec3) -> bool {
-        v[0] >= self.min[0] && v[0] <= self.max[0]
-            && v[1] >= self.min[1] && v[1] <= self.max[1]
-            && v[2] >= self.min[2] && v[2] <= self.max[2]
+        v[0] >= self.min[0]
+            && v[0] <= self.max[0]
+            && v[1] >= self.min[1]
+            && v[1] <= self.max[1]
+            && v[2] >= self.min[2]
+            && v[2] <= self.max[2]
     }
     fn in_t_range(&self, x: f32, y: f32) -> bool {
         x >= self.tmin[0] && x <= self.tmax[0] && y >= self.tmin[1] && y <= self.tmax[1]
@@ -89,13 +94,21 @@ impl Transform {
         }
         let mut p = v;
         if !no_scale(self.scale) {
-            p = [p[0] * self.scale[0], p[1] * self.scale[1], p[2] * self.scale[2]];
+            p = [
+                p[0] * self.scale[0],
+                p[1] * self.scale[1],
+                p[2] * self.scale[2],
+            ];
         }
         if !no_rot(self.rotate_deg) {
             p = rotate_xyz(p, self.rotate_deg);
         }
         if !no_trans(self.translate) {
-            p = [p[0] + self.translate[0], p[1] + self.translate[1], p[2] + self.translate[2]];
+            p = [
+                p[0] + self.translate[0],
+                p[1] + self.translate[1],
+                p[2] + self.translate[2],
+            ];
         }
         Some(p)
     }
@@ -162,7 +175,11 @@ impl Transform {
             return None;
         }
         let (mut px, mut py) = (x, y);
-        if !(self.tscale[0] > 0.9999 && self.tscale[0] < 1.0001 && self.tscale[1] > 0.9999 && self.tscale[1] < 1.0001) {
+        if !(self.tscale[0] > 0.9999
+            && self.tscale[0] < 1.0001
+            && self.tscale[1] > 0.9999
+            && self.tscale[1] < 1.0001)
+        {
             px *= self.tscale[0];
             py *= self.tscale[1];
         }
@@ -321,7 +338,10 @@ fn parse_ini_with_path(
 }
 
 fn get_str<'a>(section: &'a Section, key: &str, default: &'a str) -> &'a str {
-    section.get(key).map(|value| value.as_str()).unwrap_or(default)
+    section
+        .get(key)
+        .map(|value| value.as_str())
+        .unwrap_or(default)
 }
 
 fn parse_tuple(
@@ -391,13 +411,7 @@ fn parse_vec3(
     path: &str,
     section_name: &str,
 ) -> Result<Vec3, ParseError> {
-    let values = parse_tuple(
-        get_str(section, key, default),
-        path,
-        section_name,
-        key,
-        3,
-    )?;
+    let values = parse_tuple(get_str(section, key, default), path, section_name, key, 3)?;
 
     Ok([values[0], values[1], values[2]])
 }
@@ -409,13 +423,7 @@ fn parse_vec2(
     path: &str,
     section_name: &str,
 ) -> Result<[f32; 2], ParseError> {
-    let values = parse_tuple(
-        get_str(section, key, default),
-        path,
-        section_name,
-        key,
-        2,
-    )?;
+    let values = parse_tuple(get_str(section, key, default), path, section_name, key, 2)?;
 
     Ok([values[0], values[1]])
 }
@@ -427,13 +435,7 @@ fn parse_scalar(
     path: &str,
     section_name: &str,
 ) -> Result<f32, ParseError> {
-    Ok(parse_tuple(
-        get_str(section, key, default),
-        path,
-        section_name,
-        key,
-        1,
-    )?[0])
+    Ok(parse_tuple(get_str(section, key, default), path, section_name, key, 1)?[0])
 }
 
 /// Loads all [s0]..[sN-1] sections based on [Global] nTransforms.
@@ -461,9 +463,9 @@ pub fn load_transforms_from_path(
 
     let sections = parse_ini_with_path(path, ini_text, debug)?;
 
-    let global = sections.get("global").ok_or_else(|| {
-        ParseError(format!("{path}: Section [Global]: missing"))
-    })?;
+    let global = sections
+        .get("global")
+        .ok_or_else(|| ParseError(format!("{path}: Section [Global]: missing")))?;
 
     let count_raw = global.get("ntransforms").ok_or_else(|| {
         ParseError(format!(
@@ -488,11 +490,9 @@ pub fn load_transforms_from_path(
     for index in 0..count {
         let section_name = format!("s{index}");
 
-        let section = sections.get(&section_name).ok_or_else(|| {
-            ParseError(format!(
-                "{path}: Section [{section_name}]: missing"
-            ))
-        })?;
+        let section = sections
+            .get(&section_name)
+            .ok_or_else(|| ParseError(format!("{path}: Section [{section_name}]: missing")))?;
 
         for unknown_key in section
             .keys()
@@ -544,13 +544,7 @@ pub fn load_transforms_from_path(
         transforms.push(Transform {
             match_pat,
             substitute,
-            scale: parse_vec3(
-                section,
-                "scale",
-                "( 1.0 , 1.0 , 1.0 )",
-                path,
-                &section_name,
-            )?,
+            scale: parse_vec3(section, "scale", "( 1.0 , 1.0 , 1.0 )", path, &section_name)?,
             rotate_deg: parse_vec3(
                 section,
                 "rotate",
@@ -579,27 +573,9 @@ pub fn load_transforms_from_path(
                 path,
                 &section_name,
             )?,
-            tscale: parse_vec2(
-                section,
-                "tscale",
-                "( 1.0 , 1.0 )",
-                path,
-                &section_name,
-            )?,
-            trotate_z_deg: parse_scalar(
-                section,
-                "trotate",
-                "( 0.0 )",
-                path,
-                &section_name,
-            )?,
-            ttranslate: parse_vec2(
-                section,
-                "ttranslate",
-                "( 0.0 , 0.0 )",
-                path,
-                &section_name,
-            )?,
+            tscale: parse_vec2(section, "tscale", "( 1.0 , 1.0 )", path, &section_name)?,
+            trotate_z_deg: parse_scalar(section, "trotate", "( 0.0 )", path, &section_name)?,
+            ttranslate: parse_vec2(section, "ttranslate", "( 0.0 , 0.0 )", path, &section_name)?,
             tmin: parse_vec2(
                 section,
                 "tminimum",
@@ -786,7 +762,10 @@ mod tests {
 
         // Extra channel: same transform applies regardless of tbitmap.
         let (x, y) = t.apply_tvert_extra(0.5, 0.5).unwrap();
-        assert!((x - 1.0).abs() < 1e-5 && (y - 1.0).abs() < 1e-5, "got ({x}, {y})");
+        assert!(
+            (x - 1.0).abs() < 1e-5 && (y - 1.0).abs() < 1e-5,
+            "got ({x}, {y})"
+        );
     }
 
     #[test]

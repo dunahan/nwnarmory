@@ -64,7 +64,9 @@ fn print_usage() {
     eprintln!("to ASCII NWN .mdl files (race variants).");
     eprintln!("  --debug, -d;               Shows ignored/erroneous lines when loading the INI.");
     eprintln!("  --values, -v;              Fits scale/rotate/translate between two .mdl files and prints INI-ready output.");
-    eprintln!("  --rename-bitmap[=NAME];    Off by default: the bitmap/texture line is left untouched.");
+    eprintln!(
+        "  --rename-bitmap[=NAME];    Off by default: the bitmap/texture line is left untouched."
+    );
     eprintln!("                             Bare flag: substitute the model name into it, like the old default.");
     eprintln!("                             With =NAME: set the bitmap line to that literal texture name instead.");
 }
@@ -100,7 +102,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
 
     if raw_args.iter().any(|a| a == "--values" || a == "-v") {
-        let rest: Vec<&String> = raw_args.iter().filter(|a| *a != "--values" && *a != "-v").collect();
+        let rest: Vec<&String> = raw_args
+            .iter()
+            .filter(|a| *a != "--values" && *a != "-v")
+            .collect();
         if rest.len() != 2 {
             eprintln!("Usage: nwnarmory --values|-v <source.mdl> <target.mdl>");
             std::process::exit(2);
@@ -113,14 +118,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let args: Vec<String> = raw_args
         .into_iter()
-        .filter(|a| a != "--debug" && a != "-d" && a != "--rename-bitmap" && !a.starts_with("--rename-bitmap="))
+        .filter(|a| {
+            a != "--debug"
+                && a != "-d"
+                && a != "--rename-bitmap"
+                && !a.starts_with("--rename-bitmap=")
+        })
         .collect();
 
     if args.len() != 3 {
         print_usage();
         std::process::exit(2);
     }
-    run_transform(&args[0], &args[1], PathBuf::from(&args[2]), debug, &bitmap_mode)
+    run_transform(
+        &args[0],
+        &args[1],
+        PathBuf::from(&args[2]),
+        debug,
+        &bitmap_mode,
+    )
 }
 
 fn run_transform(
@@ -160,7 +176,10 @@ fn run_transform(
                 continue;
             }
             matched_any = true;
-            let ext = src_path.extension().and_then(|e| e.to_str()).unwrap_or("mdl");
+            let ext = src_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("mdl");
             let out_name = build_substitute(&stem, &t.substitute);
             let out_path = dest_dir.join(format!("{out_name}.{ext}"));
 
@@ -182,9 +201,11 @@ fn run_transform(
                 skipped_collisions += 1;
                 continue;
             }
-            
-
-            eprintln!("Processing {} -> {}", src_path.display(), out_path.display());
+            eprintln!(
+                "Processing {} -> {}",
+                src_path.display(),
+                out_path.display()
+            );
             if let Err(e) = process_model(src_path, &stem, &out_name, &out_path, t, bitmap_mode) {
                 eprintln!("  Error in {}: {e}", src_path.display());
                 failed += 1;
@@ -196,7 +217,14 @@ fn run_transform(
             eprintln!("Warning: '{}' does not match any transform rule, skipped. Use --debug for details.", src_path.display());
             if debug {
                 eprintln!("  Model name (stem): '{stem}'");
-                eprintln!("  Loaded match patterns: {}", transforms.iter().map(|t| t.match_pat.as_str()).collect::<Vec<_>>().join(", "));
+                eprintln!(
+                    "  Loaded match patterns: {}",
+                    transforms
+                        .iter()
+                        .map(|t| t.match_pat.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
             }
         }
     }
@@ -207,7 +235,8 @@ fn run_transform(
     if skipped_collisions > 0 || failed > 0 {
         return Err(format!(
             "batch completed with {skipped_collisions} collision(s) and {failed} failure(s)"
-        ).into());
+        )
+        .into());
     }
     Ok(())
 }
@@ -227,7 +256,11 @@ fn collect_source_files(src_arg: &str) -> Result<Vec<PathBuf>, Box<dyn std::erro
         for entry in fs::read_dir(path)? {
             let entry = entry?;
             let p = entry.path();
-            if p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("mdl")).unwrap_or(false) {
+            if p.extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("mdl"))
+                .unwrap_or(false)
+            {
                 out.push(p);
             }
         }
@@ -265,12 +298,15 @@ fn process_model(
             if let Err(e) = fs::hard_link(&tmp_path, out_path) {
                 let _ = fs::remove_file(&tmp_path);
                 if e.kind() == std::io::ErrorKind::AlreadyExists {
-                    return Err(format!("target file '{}' already exists", out_path.display()).into());
+                    return Err(
+                        format!("target file '{}' already exists", out_path.display()).into(),
+                    );
                 }
                 return Err(format!(
                     "cannot publish '{}' without overwriting an existing file: {e}",
                     out_path.display()
-                ).into());
+                )
+                .into());
             }
             fs::remove_file(&tmp_path)?;
             Ok(())
@@ -292,13 +328,15 @@ fn temporary_path(out_path: &Path) -> Result<PathBuf, Box<dyn std::error::Error>
     Ok(out_path.with_file_name(temporary_name))
 }
 
-fn model_error(
-    path: &Path,
-    line: usize,
-    block: &str,
-    message: &str,
-) -> Box<dyn std::error::Error> {
-    format!("{}:{}: Block '{}': {}", path.display(), line, block, message).into()
+fn model_error(path: &Path, line: usize, block: &str, message: &str) -> Box<dyn std::error::Error> {
+    format!(
+        "{}:{}: Block '{}': {}",
+        path.display(),
+        line,
+        block,
+        message
+    )
+    .into()
 }
 
 fn parse_block_count(
@@ -309,14 +347,8 @@ fn parse_block_count(
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let raw = token.ok_or_else(|| model_error(path, line_no, block, "Quantity missing"))?;
 
-    raw.parse::<usize>().map_err(|_| {
-        model_error(
-            path,
-            line_no,
-            block,
-            &format!("invalid quantity '{raw}'"),
-        )
-    })
+    raw.parse::<usize>()
+        .map_err(|_| model_error(path, line_no, block, &format!("invalid quantity '{raw}'")))
 }
 
 fn parse_numbers(
@@ -331,25 +363,15 @@ fn parse_numbers(
         .map(|token| token.parse::<f32>())
         .collect();
 
-    let values = values.map_err(|_| {
-        model_error(
-            path,
-            line_no,
-            block,
-            &format!("invalid number in '{line}'"),
-        )
-    })?;
+    let values = values
+        .map_err(|_| model_error(path, line_no, block, &format!("invalid number in '{line}'")))?;
 
     if values.len() != expected || values.iter().any(|value| !value.is_finite()) {
         return Err(model_error(
             path,
             line_no,
             block,
-            &format!(
-                "{} numbers expected, received {}",
-                expected,
-                values.len()
-            ),
+            &format!("{} numbers expected, received {}", expected, values.len()),
         ));
     }
 
@@ -372,12 +394,7 @@ fn next_block_line(
             block,
             &format!("Reading error: {error}"),
         )),
-        None => Err(model_error(
-            path,
-            *line_no,
-            block,
-            "unexpected end of file",
-        )),
+        None => Err(model_error(path, *line_no, block, "unexpected end of file")),
     }
 }
 
@@ -415,15 +432,8 @@ fn process_model_inner(
         let keyword = it.next().unwrap_or("").to_lowercase();
 
         match keyword.as_str() {
-            "verts"
-            | "animverts"
-            | "normals"
-            | "tangents"
-            | "tverts"
-            | "animtverts"
-            | "tverts1"
-            | "tverts2"
-            | "tverts3" => {
+            "verts" | "animverts" | "normals" | "tangents" | "tverts" | "animtverts"
+            | "tverts1" | "tverts2" | "tverts3" => {
                 let block = keyword.as_str();
                 let count = parse_block_count(src_path, line_no, block, it.next())?;
 
@@ -439,15 +449,9 @@ fn process_model_inner(
                 let expected_values = if tangent { 4 } else { 3 };
 
                 for _ in 0..count {
-                    let item_line =
-                        next_block_line(&mut lines, &mut line_no, src_path, block)?;
-                    let values = parse_numbers(
-                        src_path,
-                        line_no,
-                        block,
-                        &item_line,
-                        expected_values,
-                    )?;
+                    let item_line = next_block_line(&mut lines, &mut line_no, src_path, block)?;
+                    let values =
+                        parse_numbers(src_path, line_no, block, &item_line, expected_values)?;
 
                     if normal {
                         write_vec3(
@@ -473,11 +477,7 @@ fn process_model_inner(
 
                         match transformed {
                             Some((x, y)) => {
-                                writeln!(
-                                    out,
-                                    "    {:.7} {:.7} {:.7}",
-                                    x, y, values[2]
-                                )?
+                                writeln!(out, "    {:.7} {:.7} {:.7}", x, y, values[2])?
                             }
                             None => writeln!(out, "{item_line}")?,
                         }
@@ -495,18 +495,16 @@ fn process_model_inner(
             }
 
             "bitmap" => {
-                let name = it.next().ok_or_else(|| {
-                    model_error(src_path, line_no, "bitmap", "Key/Value missing")
-                })?;
+                let name = it
+                    .next()
+                    .ok_or_else(|| model_error(src_path, line_no, "bitmap", "Key/Value missing"))?;
 
                 last_bitmap = name.to_lowercase();
 
                 let indent = &line[..line.len() - trimmed.len()];
                 let out_line = match bitmap_mode {
                     BitmapMode::Keep => line.clone(),
-                    BitmapMode::RenameToModel => {
-                        replace_no_case(&line, src_stem, dest_stem)
-                    }
+                    BitmapMode::RenameToModel => replace_no_case(&line, src_stem, dest_stem),
                     BitmapMode::RenameTo(name) => format!("{indent}bitmap {name}"),
                 };
 
@@ -515,13 +513,7 @@ fn process_model_inner(
 
             "position" => {
                 let raw_values = it.collect::<Vec<_>>().join(" ");
-                let values = parse_numbers(
-                    src_path,
-                    line_no,
-                    "position",
-                    &raw_values,
-                    3,
-                )?;
+                let values = parse_numbers(src_path, line_no, "position", &raw_values, 3)?;
 
                 let parsed = [values[0], values[1], values[2]];
 
@@ -560,11 +552,7 @@ fn write_vec3(
     original: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match value {
-        Some(value) => writeln!(
-            out,
-            "    {:.7} {:.7} {:.7}",
-            value[0], value[1], value[2]
-        )?,
+        Some(value) => writeln!(out, "    {:.7} {:.7} {:.7}", value[0], value[1], value[2])?,
         None => writeln!(out, "{original}")?,
     }
 
@@ -597,15 +585,15 @@ mod tests {
 
     #[test]
     fn replace_no_case_basic() {
-        assert_eq!(replace_no_case("bitmap PM01_BELT001", "pm01_belt001", "pm01a_belt001"), "bitmap pm01a_belt001");
+        assert_eq!(
+            replace_no_case("bitmap PM01_BELT001", "pm01_belt001", "pm01a_belt001"),
+            "bitmap pm01a_belt001"
+        );
     }
-    
     #[test]
     fn malformed_mdl_header_is_rejected_with_context() {
-        let dir = std::env::temp_dir().join(format!(
-            "nwnarmory-strict-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("nwnarmory-strict-test-{}", std::process::id()));
 
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();

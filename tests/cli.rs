@@ -11,10 +11,8 @@ impl TempDir {
             .duration_since(UNIX_EPOCH)
             .expect("system time before Unix epoch")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "nwnarmory-{label}-{}-{nonce}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("nwnarmory-{label}-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&path).expect("create temporary test directory");
         Self(path)
     }
@@ -66,8 +64,15 @@ fn existing_target_is_preserved_and_reported_as_failure() {
 
     let output = run(&ini_path, &source, &destination);
 
-    assert!(!output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(fs::read_to_string(&target).expect("read existing target"), "do not overwrite me\n");
+    assert!(
+        !output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&target).expect("read existing target"),
+        "do not overwrite me\n"
+    );
     assert!(String::from_utf8_lossy(&output.stderr).contains("already exists"));
 }
 
@@ -88,7 +93,11 @@ fn duplicate_targets_in_one_run_are_skipped_and_reported_as_failure() {
 
     let output = run(&ini_path, &source_dir, &destination);
 
-    assert!(!output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        !output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(destination.join("same.mdl").exists());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -113,7 +122,11 @@ fn malformed_model_leaves_no_output_or_temporary_file() {
 
     let output = run(&ini_path, &source, &destination);
 
-    assert!(!output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        !output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(!destination.join("source.mdl").exists());
     assert!(!destination.join("source.mdl.tmp").exists());
 
@@ -139,7 +152,11 @@ fn batch_keeps_successful_outputs_but_returns_failure_when_one_model_fails() {
 
     let output = run(&ini_path, &source_dir, &destination);
 
-    assert!(!output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        !output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(destination.join("good.mdl").exists());
     assert!(!destination.join("broken.mdl").exists());
     assert!(String::from_utf8_lossy(&output.stderr).contains("1 file(s) failed"));

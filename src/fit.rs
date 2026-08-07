@@ -93,7 +93,10 @@ fn print_tvert_fit(src: &Geometry, tgt: &Geometry) {
         return;
     }
     if src.tverts.len() < 2 {
-        eprintln!("Warning: only {} tvert(s); need at least 2 to fit a texture transform.", src.tverts.len());
+        eprintln!(
+            "Warning: only {} tvert(s); need at least 2 to fit a texture transform.",
+            src.tverts.len()
+        );
         return;
     }
     match fit_affine2(&src.tverts, &tgt.tverts) {
@@ -121,7 +124,10 @@ fn print_position(src: &Geometry, tgt: &Geometry) {
             // delta transform, so no fitting is needed: report the target
             // value directly.
             println!("position=({:.4}, {:.4}, {:.4})", tp[0], tp[1], tp[2]);
-            println!("; source position was ({:.4}, {:.4}, {:.4})", sp[0], sp[1], sp[2]);
+            println!(
+                "; source position was ({:.4}, {:.4}, {:.4})",
+                sp[0], sp[1], sp[2]
+            );
             if src.positions.len() > 1 || tgt.positions.len() > 1 {
                 eprintln!("Note: file(s) contain more than one 'position' line; only the first pair was compared.");
             }
@@ -280,7 +286,11 @@ fn fit_affine3(src: &[[f64; 3]], tgt: &[[f64; 3]]) -> Option<(Mat3, [f64; 3])> {
 fn decompose_affine3(a: Mat3) -> ([f64; 3], [f64; 3]) {
     let at = mat3_transpose(a);
     let aat = mat3_mul(a, at);
-    let scale = [aat[0][0].max(0.0).sqrt(), aat[1][1].max(0.0).sqrt(), aat[2][2].max(0.0).sqrt()];
+    let scale = [
+        aat[0][0].max(0.0).sqrt(),
+        aat[1][1].max(0.0).sqrt(),
+        aat[2][2].max(0.0).sqrt(),
+    ];
 
     let eps = 1e-9;
     let s_inv = [
@@ -288,7 +298,11 @@ fn decompose_affine3(a: Mat3) -> ([f64; 3], [f64; 3]) {
         if scale[1] > eps { 1.0 / scale[1] } else { 0.0 },
         if scale[2] > eps { 1.0 / scale[2] } else { 0.0 },
     ];
-    let s_inv_diag: Mat3 = [[s_inv[0], 0.0, 0.0], [0.0, s_inv[1], 0.0], [0.0, 0.0, s_inv[2]]];
+    let s_inv_diag: Mat3 = [
+        [s_inv[0], 0.0, 0.0],
+        [0.0, s_inv[1], 0.0],
+        [0.0, 0.0, s_inv[2]],
+    ];
     let r = mat3_mul(at, s_inv_diag); // R = A^T * S^-1
 
     let ry = (-r[2][0]).clamp(-1.0, 1.0).asin();
@@ -401,10 +415,18 @@ fn centroid2(pts: &[[f64; 2]]) -> [f64; 2] {
     }
     [c[0] / n, c[1] / n]
 }
-fn sub3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] { [a[0] - b[0], a[1] - b[1], a[2] - b[2]] }
-fn add3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] { [a[0] + b[0], a[1] + b[1], a[2] + b[2]] }
-fn sub2(a: [f64; 2], b: [f64; 2]) -> [f64; 2] { [a[0] - b[0], a[1] - b[1]] }
-fn add2(a: [f64; 2], b: [f64; 2]) -> [f64; 2] { [a[0] + b[0], a[1] + b[1]] }
+fn sub3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+fn add3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+fn sub2(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+    [a[0] - b[0], a[1] - b[1]]
+}
+fn add2(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+    [a[0] + b[0], a[1] + b[1]]
+}
 fn dist3(a: [f64; 3], b: [f64; 3]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
@@ -420,7 +442,10 @@ fn apply3_linear(v: [f64; 3], a: Mat3) -> [f64; 3] {
     ]
 }
 fn apply2_linear(v: [f64; 2], a: Mat2) -> [f64; 2] {
-    [v[0] * a[0][0] + v[1] * a[1][0], v[0] * a[0][1] + v[1] * a[1][1]]
+    [
+        v[0] * a[0][0] + v[1] * a[1][0],
+        v[0] * a[0][1] + v[1] * a[1][1],
+    ]
 }
 
 fn mat3_mul(a: Mat3, b: Mat3) -> Mat3 {
@@ -470,11 +495,19 @@ fn mat3_inverse(a: Mat3) -> Option<Mat3> {
 
 fn mat2_mul(a: Mat2, b: Mat2) -> Mat2 {
     [
-        [a[0][0] * b[0][0] + a[0][1] * b[1][0], a[0][0] * b[0][1] + a[0][1] * b[1][1]],
-        [a[1][0] * b[0][0] + a[1][1] * b[1][0], a[1][0] * b[0][1] + a[1][1] * b[1][1]],
+        [
+            a[0][0] * b[0][0] + a[0][1] * b[1][0],
+            a[0][0] * b[0][1] + a[0][1] * b[1][1],
+        ],
+        [
+            a[1][0] * b[0][0] + a[1][1] * b[1][0],
+            a[1][0] * b[0][1] + a[1][1] * b[1][1],
+        ],
     ]
 }
-fn mat2_transpose(a: Mat2) -> Mat2 { [[a[0][0], a[1][0]], [a[0][1], a[1][1]]] }
+fn mat2_transpose(a: Mat2) -> Mat2 {
+    [[a[0][0], a[1][0]], [a[0][1], a[1][1]]]
+}
 fn mat2_inverse(a: Mat2) -> Option<Mat2> {
     let det = a[0][0] * a[1][1] - a[0][1] * a[1][0];
     if det.abs() < 1e-12 {
@@ -506,31 +539,54 @@ mod tests {
         let (s, c) = r.sin_cos();
         [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]
     }
-    fn t_apply(v: [f64; 3], scale: [f64; 3], rotate_deg: [f64; 3], translate: [f64; 3]) -> [f64; 3] {
+    fn t_apply(
+        v: [f64; 3],
+        scale: [f64; 3],
+        rotate_deg: [f64; 3],
+        translate: [f64; 3],
+    ) -> [f64; 3] {
         let mut p = [v[0] * scale[0], v[1] * scale[1], v[2] * scale[2]];
         p = t_rotate_x(p, -rotate_deg[0].to_radians());
         p = t_rotate_y(p, -rotate_deg[1].to_radians());
         p = t_rotate_z(p, rotate_deg[2].to_radians());
-        [p[0] + translate[0], p[1] + translate[1], p[2] + translate[2]]
+        [
+            p[0] + translate[0],
+            p[1] + translate[1],
+            p[2] + translate[2],
+        ]
     }
 
     #[test]
     fn fit_affine3_roundtrip() {
         let src = vec![
-            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
-            [1.0, 1.0, 0.0], [1.0, 0.0, 1.0], [0.5, 0.3, 0.7], [-0.4, 0.9, 0.2],
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0],
+            [1.0, 0.0, 1.0],
+            [0.5, 0.3, 0.7],
+            [-0.4, 0.9, 0.2],
         ];
         let scale = [0.8, 1.2, 0.95];
         let rotate = [12.0, -7.0, 25.0];
         let translate = [1.5, -0.3, 0.2];
-        let tgt: Vec<[f64; 3]> = src.iter().map(|v| t_apply(*v, scale, rotate, translate)).collect();
+        let tgt: Vec<[f64; 3]> = src
+            .iter()
+            .map(|v| t_apply(*v, scale, rotate, translate))
+            .collect();
 
         let (a, t) = fit_affine3(&src, &tgt).expect("fit should succeed");
         let (got_scale, got_rot) = decompose_affine3(a);
 
         for i in 0..3 {
             assert!((got_scale[i] - scale[i]).abs() < 1e-6, "scale[{i}]");
-            assert!((got_rot[i] - rotate[i]).abs() < 1e-4, "rot[{i}]: got {} want {}", got_rot[i], rotate[i]);
+            assert!(
+                (got_rot[i] - rotate[i]).abs() < 1e-4,
+                "rot[{i}]: got {} want {}",
+                got_rot[i],
+                rotate[i]
+            );
             assert!((t[i] - translate[i]).abs() < 1e-6, "t[{i}]");
         }
     }
