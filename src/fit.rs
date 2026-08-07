@@ -93,7 +93,10 @@ fn print_tvert_fit(src: &Geometry, tgt: &Geometry) {
         return;
     }
     if src.tverts.len() < 2 {
-        eprintln!("Warning: only {} tvert(s); need at least 2 to fit a texture transform.", src.tverts.len());
+        eprintln!(
+            "Warning: only {} tvert(s); need at least 2 to fit a texture transform.",
+            src.tverts.len()
+        );
         return;
     }
     match fit_affine2(&src.tverts, &tgt.tverts) {
@@ -121,7 +124,10 @@ fn print_position(src: &Geometry, tgt: &Geometry) {
             // delta transform, so no fitting is needed: report the target
             // value directly.
             println!("position=({:.4}, {:.4}, {:.4})", tp[0], tp[1], tp[2]);
-            println!("; source position was ({:.4}, {:.4}, {:.4})", sp[0], sp[1], sp[2]);
+            println!(
+                "; source position was ({:.4}, {:.4}, {:.4})",
+                sp[0], sp[1], sp[2]
+            );
             if src.positions.len() > 1 || tgt.positions.len() > 1 {
                 eprintln!("Note: file(s) contain more than one 'position' line; only the first pair was compared.");
             }
@@ -135,55 +141,116 @@ fn print_position(src: &Geometry, tgt: &Geometry) {
 // ---------------------------------------------------------------------
 
 fn read_geometry(path: &Path) -> Result<Geometry, Box<dyn std::error::Error>> {
-    let file = fs::File::open(path).map_err(|e| format!("cannot read '{}': {e}", path.display()))?;
+    let file = fs::File::open(path)
+        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+
     let mut lines = BufReader::new(file).lines();
     let mut geo = Geometry::default();
+    let mut line_no = 0usize;
 
-    while let Some(line) = lines.next() {
-        let line = line?;
-        let trimmed = line.trim_start();
-        let mut it = trimmed.split_whitespace();
+    while let Some(result) = lines.next() {
+        line_no += 1;
+        let line = result?;
+
+        let mut it = line.split_whitespace();
         let keyword = it.next().unwrap_or("").to_lowercase();
 
         match keyword.as_str() {
-            "verts" => {
-                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                read_block(&mut lines, n, |vals| {
-                    if vals.len() >= 3 {
-                        geo.verts.push([vals[0], vals[1], vals[2]]);
+            "verts" | "tverts" => {
+                let block = keyword.as_str();
+
+                let raw_count = it.next().ok_or_else(|| {
+                    format!(
+                        "{}:{}: Block '{}': Count missing",
+                        path.display(),
+                        line_no,
+                        block
+                    )
+                })?;
+
+                let count: usize = raw_count.parse().map_err(|_| {
+                    format!(
+                        "{}:{}: Block '{}': invalid count '{}'",
+                        path.display(),
+                        line_no,
+                        block,
+                        raw_count
+                    )
+                })?;
+
+                let needed = if block == "verts" { 3 } else { 2 };
+
+                for _ in 0..count {
+                    line_no += 1;
+
+                    let item = lines.next().ok_or_else(|| {
+                        format!(
+                            "{}:{}: Block '{}': unexpected end of file",
+                            path.display(),
+                            line_no,
+                            block
+                        )
+                    })??;
+
+                    let values: Result<Vec<f64>, _> =
+                        item.split_whitespace().map(str::parse).collect();
+
+                    let values = values.map_err(|_| {
+                        format!(
+                            "{}:{}: Block '{}': invalid number",
+                            path.display(),
+                            line_no,
+                            block
+                        )
+                    })?;
+
+                    if values.len() < needed || values.iter().any(|value| !value.is_finite()) {
+                        return Err(format!(
+                            "{}:{}: Block '{}': at least {} finite numbers expected",
+                            path.display(),
+                            line_no,
+                            block,
+                            needed
+                        )
+                        .into());
                     }
-                });
-            }
-            "tverts" => {
-                let n: usize = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-                read_block(&mut lines, n, |vals| {
-                    if vals.len() >= 2 {
-                        geo.tverts.push([vals[0], vals[1]]);
+
+                    if block == "verts" {
+                        geo.verts.push([values[0], values[1], values[2]]);
+                    } else {
+                        geo.tverts.push([values[0], values[1]]);
                     }
-                });
-            }
-            "position" => {
-                let vals: Vec<f64> = it.filter_map(|s| s.parse().ok()).collect();
-                if vals.len() >= 3 {
-                    geo.positions.push([vals[0], vals[1], vals[2]]);
                 }
             }
+
+            "position" => {
+                let values: Result<Vec<f64>, _> = it.map(str::parse).collect();
+
+                let values = values.map_err(|_| {
+                    format!(
+                        "{}:{}: Block 'position': invalid number",
+                        path.display(),
+                        line_no
+                    )
+                })?;
+
+                if values.len() != 3 || values.iter().any(|value| !value.is_finite()) {
+                    return Err(format!(
+                        "{}:{}: Block 'position': exactly 3 finite numbers expected",
+                        path.display(),
+                        line_no
+                    )
+                    .into());
+                }
+
+                geo.positions.push([values[0], values[1], values[2]]);
+            }
+
             _ => {}
         }
     }
-    Ok(geo)
-}
 
-fn read_block(
-    lines: &mut std::io::Lines<BufReader<fs::File>>,
-    n: usize,
-    mut push: impl FnMut(Vec<f64>),
-) {
-    for _ in 0..n {
-        let Some(Ok(line)) = lines.next() else { break };
-        let vals: Vec<f64> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
-        push(vals);
-    }
+    Ok(geo)
 }
 
 // ---------------------------------------------------------------------
@@ -219,7 +286,11 @@ fn fit_affine3(src: &[[f64; 3]], tgt: &[[f64; 3]]) -> Option<(Mat3, [f64; 3])> {
 fn decompose_affine3(a: Mat3) -> ([f64; 3], [f64; 3]) {
     let at = mat3_transpose(a);
     let aat = mat3_mul(a, at);
-    let scale = [aat[0][0].max(0.0).sqrt(), aat[1][1].max(0.0).sqrt(), aat[2][2].max(0.0).sqrt()];
+    let scale = [
+        aat[0][0].max(0.0).sqrt(),
+        aat[1][1].max(0.0).sqrt(),
+        aat[2][2].max(0.0).sqrt(),
+    ];
 
     let eps = 1e-9;
     let s_inv = [
@@ -227,7 +298,11 @@ fn decompose_affine3(a: Mat3) -> ([f64; 3], [f64; 3]) {
         if scale[1] > eps { 1.0 / scale[1] } else { 0.0 },
         if scale[2] > eps { 1.0 / scale[2] } else { 0.0 },
     ];
-    let s_inv_diag: Mat3 = [[s_inv[0], 0.0, 0.0], [0.0, s_inv[1], 0.0], [0.0, 0.0, s_inv[2]]];
+    let s_inv_diag: Mat3 = [
+        [s_inv[0], 0.0, 0.0],
+        [0.0, s_inv[1], 0.0],
+        [0.0, 0.0, s_inv[2]],
+    ];
     let r = mat3_mul(at, s_inv_diag); // R = A^T * S^-1
 
     let ry = (-r[2][0]).clamp(-1.0, 1.0).asin();
@@ -340,10 +415,18 @@ fn centroid2(pts: &[[f64; 2]]) -> [f64; 2] {
     }
     [c[0] / n, c[1] / n]
 }
-fn sub3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] { [a[0] - b[0], a[1] - b[1], a[2] - b[2]] }
-fn add3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] { [a[0] + b[0], a[1] + b[1], a[2] + b[2]] }
-fn sub2(a: [f64; 2], b: [f64; 2]) -> [f64; 2] { [a[0] - b[0], a[1] - b[1]] }
-fn add2(a: [f64; 2], b: [f64; 2]) -> [f64; 2] { [a[0] + b[0], a[1] + b[1]] }
+fn sub3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+fn add3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+fn sub2(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+    [a[0] - b[0], a[1] - b[1]]
+}
+fn add2(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+    [a[0] + b[0], a[1] + b[1]]
+}
 fn dist3(a: [f64; 3], b: [f64; 3]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
@@ -359,7 +442,10 @@ fn apply3_linear(v: [f64; 3], a: Mat3) -> [f64; 3] {
     ]
 }
 fn apply2_linear(v: [f64; 2], a: Mat2) -> [f64; 2] {
-    [v[0] * a[0][0] + v[1] * a[1][0], v[0] * a[0][1] + v[1] * a[1][1]]
+    [
+        v[0] * a[0][0] + v[1] * a[1][0],
+        v[0] * a[0][1] + v[1] * a[1][1],
+    ]
 }
 
 fn mat3_mul(a: Mat3, b: Mat3) -> Mat3 {
@@ -373,9 +459,9 @@ fn mat3_mul(a: Mat3, b: Mat3) -> Mat3 {
 }
 fn mat3_transpose(a: Mat3) -> Mat3 {
     let mut out = [[0.0; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            out[j][i] = a[i][j];
+    for (i, row) in a.iter().enumerate() {
+        for (j, &value) in row.iter().enumerate() {
+            out[j][i] = value;
         }
     }
     out
@@ -409,11 +495,19 @@ fn mat3_inverse(a: Mat3) -> Option<Mat3> {
 
 fn mat2_mul(a: Mat2, b: Mat2) -> Mat2 {
     [
-        [a[0][0] * b[0][0] + a[0][1] * b[1][0], a[0][0] * b[0][1] + a[0][1] * b[1][1]],
-        [a[1][0] * b[0][0] + a[1][1] * b[1][0], a[1][0] * b[0][1] + a[1][1] * b[1][1]],
+        [
+            a[0][0] * b[0][0] + a[0][1] * b[1][0],
+            a[0][0] * b[0][1] + a[0][1] * b[1][1],
+        ],
+        [
+            a[1][0] * b[0][0] + a[1][1] * b[1][0],
+            a[1][0] * b[0][1] + a[1][1] * b[1][1],
+        ],
     ]
 }
-fn mat2_transpose(a: Mat2) -> Mat2 { [[a[0][0], a[1][0]], [a[0][1], a[1][1]]] }
+fn mat2_transpose(a: Mat2) -> Mat2 {
+    [[a[0][0], a[1][0]], [a[0][1], a[1][1]]]
+}
 fn mat2_inverse(a: Mat2) -> Option<Mat2> {
     let det = a[0][0] * a[1][1] - a[0][1] * a[1][0];
     if det.abs() < 1e-12 {
@@ -445,31 +539,54 @@ mod tests {
         let (s, c) = r.sin_cos();
         [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]]
     }
-    fn t_apply(v: [f64; 3], scale: [f64; 3], rotate_deg: [f64; 3], translate: [f64; 3]) -> [f64; 3] {
+    fn t_apply(
+        v: [f64; 3],
+        scale: [f64; 3],
+        rotate_deg: [f64; 3],
+        translate: [f64; 3],
+    ) -> [f64; 3] {
         let mut p = [v[0] * scale[0], v[1] * scale[1], v[2] * scale[2]];
         p = t_rotate_x(p, -rotate_deg[0].to_radians());
         p = t_rotate_y(p, -rotate_deg[1].to_radians());
         p = t_rotate_z(p, rotate_deg[2].to_radians());
-        [p[0] + translate[0], p[1] + translate[1], p[2] + translate[2]]
+        [
+            p[0] + translate[0],
+            p[1] + translate[1],
+            p[2] + translate[2],
+        ]
     }
 
     #[test]
     fn fit_affine3_roundtrip() {
         let src = vec![
-            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
-            [1.0, 1.0, 0.0], [1.0, 0.0, 1.0], [0.5, 0.3, 0.7], [-0.4, 0.9, 0.2],
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0],
+            [1.0, 0.0, 1.0],
+            [0.5, 0.3, 0.7],
+            [-0.4, 0.9, 0.2],
         ];
         let scale = [0.8, 1.2, 0.95];
         let rotate = [12.0, -7.0, 25.0];
         let translate = [1.5, -0.3, 0.2];
-        let tgt: Vec<[f64; 3]> = src.iter().map(|v| t_apply(*v, scale, rotate, translate)).collect();
+        let tgt: Vec<[f64; 3]> = src
+            .iter()
+            .map(|v| t_apply(*v, scale, rotate, translate))
+            .collect();
 
         let (a, t) = fit_affine3(&src, &tgt).expect("fit should succeed");
         let (got_scale, got_rot) = decompose_affine3(a);
 
         for i in 0..3 {
             assert!((got_scale[i] - scale[i]).abs() < 1e-6, "scale[{i}]");
-            assert!((got_rot[i] - rotate[i]).abs() < 1e-4, "rot[{i}]: got {} want {}", got_rot[i], rotate[i]);
+            assert!(
+                (got_rot[i] - rotate[i]).abs() < 1e-4,
+                "rot[{i}]: got {} want {}",
+                got_rot[i],
+                rotate[i]
+            );
             assert!((t[i] - translate[i]).abs() < 1e-6, "t[{i}]");
         }
     }

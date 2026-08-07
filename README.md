@@ -1,5 +1,7 @@
 # NWNArmory
 
+**Current release: 1.3.1**
+
 **A Neverwinter Nights Model Rescaling CLI Tool**
 
 NWNArmory is a command-line interface (CLI) tool designed to automatically resize and transform standard Neverwinter Nights (NWN) 3D ASCII `.mdl` models into variants suitable for other playable races (Halfling, Dwarf, Elf, Gnome, Half-orc). 
@@ -22,15 +24,16 @@ The original C++ codebase has been completely rewritten in **Rust**. This transi
 *   **Command-Line Interface (CLI):** The GUI has been completely removed. NWNArmory is now a pure CLI tool, making it significantly easier to integrate into automated build pipelines and batch scripts.
 *   **Modern Safety & Performance:** Leveraging Rust's ownership and error-handling models guarantees memory safety and predictable execution without legacy C++ runtime issues.
 
-## ✨ Improvements in the Newest Version (v1.2.1)
+## ✨ Safety & Reliability
 
-Building upon the original v1.2 logic (which introduced absolute translation, minimum/maximum parameters, and texture map scaling), this new Rust-based version (v1.2.1) introduces critical bug fixes, enhanced mathematical accuracy, and stability improvements:
+Building upon the original v1.2 logic (which introduced absolute translation, minimum/maximum parameters, and texture map scaling), the Rust CLI focuses on deterministic transformations and safe batch processing:
 
-*   **100% Exact Vector Normals Alignment:** The normals sections produced by the transformation pipeline now achieve almost identical line-by-line, high-precision floating-point matching with game-native reference outputs, ensuring perfect shading and lighting calculations in-game.
-*   **High-Precision Vertex & Node Transformations:** Transformation matrices (scale, rotation, and absolute translation/position) have been calibrated for maximum accuracy, ensuring seamless alignment for body parts across race variants.
-*   **Safe File Writing (No Partial Writes):** If an error occurs in the middle of processing a `verts` or `normals` block, the tool no longer leaves a corrupted, partially written file behind. It now writes to a `.tmp` file and only performs an atomic rename upon success.
-*   **Collision Prevention:** Fixed a bug where files would silently overwrite each other on name collisions. The tool now tracks target paths per run, issuing a warning and skipping the file if a collision is detected.
-*   **Eliminated Legacy IO Errors:** The notorious `CFileException` unpopulated errors from the original codebase are permanently eliminated, structurally guaranteed by Rust's `Result<T, io::Error>` handling.
+*   **High-Precision Vertex & Node Transformations:** Transformation matrices (scale, rotation, and absolute translation/position) are calibrated for reliable alignment of body parts across race variants.
+*   **Normals-aware processing:** Explicit `normals` blocks are transformed using the inverse-transpose of the scale/rotation matrix and normalized, which preserves correct lighting under non-uniform scale.
+*   **Safe File Writing:** Output is first written to an exclusively created `.tmp` file. The temporary file is removed when model processing fails, so a truncated model never becomes a target file.
+*   **No accidental overwrite:** An existing target file is preserved. If a source/rule pair would produce an existing target name, or if two results in the same run would use the same name, the affected result is skipped and reported.
+*   **Automation-safe results:** The tool continues with other eligible models after a collision or model-processing error, but exits with a non-zero status when the batch was not completely successful.
+*   **Eliminated Legacy IO Errors:** The notorious `CFileException` unpopulated errors from the original codebase are eliminated through Rust's `Result<T, io::Error>` handling.
 
 ## 🛠️ Usage
 
@@ -64,6 +67,18 @@ nwnarmory -v pmh0_chest001.mdl pfa0_chest001.mdl
 ```
 
 See "Deriving Transform Values" below.
+
+### Output Collision Policy and Exit Status
+
+NWNArmory never replaces a file that already exists in the target directory. It also prevents two source/rule combinations in the same batch from writing to the same target name. In both cases, the affected output is skipped and reported on standard error.
+
+The tool continues processing other eligible models so that a batch produces all safe outputs it can. Its exit status is intended for scripts and CI:
+
+* `0` — all matched models were written successfully and no target collision occurred.
+* `1` — one or more model writes failed, or one or more output-name collisions were skipped.
+* `2` — command-line usage was invalid.
+
+Do not rely on a zero exit status merely because some output files were created; a partial batch deliberately returns `1`.
 
 ## 🧮 Deriving Transform Values (`--values` / `-v`)
 

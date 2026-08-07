@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [1.3.1] - 2026-08-07
+
+### Added
+- **CLI regression tests:** End-to-end coverage for preserving existing outputs, detecting duplicate target names, cleaning up failed writes, and reporting partial batch failures.
+
+### Changed
+- **Safe batch-output policy:** Existing target files are never overwritten. A target-name collision with an existing file or another result in the same batch is reported and skipped.
+- **Reliable automation status:** A batch that contains a collision or a model-processing failure now exits with a non-zero status after processing all remaining eligible models.
+- **Safe publishing:** Models are written to an exclusively created temporary file and published only if the target path is still free; incomplete temporary files are removed on failure.
+
 ## [1.2.4]
 
 ### Added
