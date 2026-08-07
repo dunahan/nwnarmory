@@ -1,6 +1,6 @@
 # NWNArmory
 
-**Current release: 1.3.1**
+**Current release: 1.3.2**
 
 **A Neverwinter Nights Model Rescaling CLI Tool**
 
@@ -88,7 +88,9 @@ If you already have a hand-fitted source and target model (e.g. exported from Ma
 nwnarmory --values pmh0_chest001.mdl pfa0_chest001.mdl
 ```
 
-This fits `scale`, `rotate`, `translate` (least-squares over the `verts` block), `tscale`/`trotate`/`ttranslate` (over `tverts`), and `position` (absolute, read directly from the target file) between the two models, and prints the result as INI lines ready to paste into an `[sN]` section. Each fit is followed by a `max_residual`/`mean_residual` line — a high residual means the two files don't relate by a simple scale+rotate+translate (or aren't a matching pair).
+This fits `scale`, `rotate`, `translate` (least-squares over the `verts` block), `tscale`/`trotate`/`ttranslate` (over `tverts`), and `position` (absolute, read directly from the target file) between the two models, and prints the result as INI lines ready to paste into an `[sN]` section. It also derives wildcard-compatible `match=` and `substitute=` lines from the two model names, for example `pm??_chest???` and `??a*`, matching the naming style used by the standard INI. Each fit is followed by a `max_residual`/`mean_residual` line — a high residual means the two files don't relate by a simple scale+rotate+translate (or aren't a matching pair).
+
+**Important:** Check the generated `match=` and `substitute=` lines before using them. They are inferred from only two filenames and may intentionally match more models than the two input files. Verify especially the fixed prefix, the wildcard positions, the target race/model letter, and the generated target name; adjust the patterns manually when your naming scheme differs from the standard NWNArmory convention.
 
 **Note:** this requires vertex correspondence — both models must have the same vertex count and order, i.e. the target was never remeshed relative to the source. This holds for genuine NWNArmory-style race variants.
 
