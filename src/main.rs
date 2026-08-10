@@ -533,6 +533,33 @@ fn process_model_inner(
                 writeln!(out, "{line}")?;
             }
 
+            "setsupermodel" => {
+                // setsupermodel <modelname> <supermodelname>
+                // <modelname> is the full source stem and gets swapped like any
+                // other line via replace_no_case. <supermodelname> (e.g. "pmh0")
+                // is a bare race/phenotype code, never containing the piece
+                // suffix, so replace_no_case never matches it and it survives
+                // untouched, silently leaving the generated model pointed at
+                // the wrong race's supermodel. Apply the same wildcard
+                // substitute pattern used for the model name to this token too.
+                let model_name = it.next().ok_or_else(|| {
+                    model_error(src_path, line_no, "setsupermodel", "model name missing")
+                })?;
+                let super_name = it.next().ok_or_else(|| {
+                    model_error(
+                        src_path,
+                        line_no,
+                        "setsupermodel",
+                        "supermodel name missing",
+                    )
+                })?;
+
+                let new_model = replace_no_case(model_name, src_stem, dest_stem);
+                let new_super = build_substitute(super_name, &t.substitute);
+
+                writeln!(out, "setsupermodel {new_model} {new_super}")?;
+            }
+
             _ => {
                 writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
             }
@@ -636,6 +663,59 @@ mod tests {
                 && error.contains("Block 'verts'")
                 && error.contains("invalid quantity"),
             "{error}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn setsupermodel_rewrites_both_model_and_supermodel_name() {
+        let dir =
+            std::env::temp_dir().join(format!("nwnarmory-supermodel-test-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("pmh0_robe112.mdl");
+        let out = dir.join("out.tmp");
+
+        fs::write(
+            &src,
+            "newmodel pmh0_robe112\nsetsupermodel pmh0_robe112 pmh0\ndonemodel pmh0_robe112\n",
+        )
+        .unwrap();
+
+        let transform = Transform {
+            match_pat: "pm??_robe???".into(),
+            substitute: "??a*".into(),
+            scale: [1.0; 3],
+            rotate_deg: [0.0; 3],
+            translate: [0.0; 3],
+            min: [-999.0; 3],
+            max: [999.0; 3],
+            tscale: [1.0; 2],
+            trotate_z_deg: 0.0,
+            ttranslate: [0.0; 2],
+            tmin: [-999.0; 2],
+            tmax: [999.0; 2],
+            tbitmap: None,
+            position: PositionMode::LikeVertex,
+        };
+
+        process_model_inner(
+            &src,
+            "pmh0_robe112",
+            "pma0_robe112",
+            &out,
+            &transform,
+            &BitmapMode::Keep,
+        )
+        .unwrap();
+
+        let written = fs::read_to_string(&out).unwrap();
+        assert!(
+            written.contains("setsupermodel pma0_robe112 pma0"),
+            "supermodel line not rewritten correctly: {written}"
         );
 
         let _ = fs::remove_dir_all(&dir);
