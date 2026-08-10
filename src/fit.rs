@@ -103,10 +103,14 @@ pub fn run_values(source_path: &str, target_path: &str) -> Result<(), Box<dyn st
     let source_stem = model_stem(source_path)?;
     let target_stem = model_stem(target_path)?;
 
+    println!("; Note: check the generated values and adjust appropriately");
     println!("; computed from {} -> {}", source_path, target_path);
-    println!("; paste the lines you want into a transforms.ini [sN] section");
+    println!("; paste the lines you need into a transforms.ini [sN] section");
     let (match_pattern, substitute) = model_patterns(&source_stem, &target_stem);
     println!("; wildcard model-name mapping inferred from the two file names");
+    println!("nTransforms=#");
+    println!();
+    println!("[s#]");
     println!("match={match_pattern}");
     println!("substitute={substitute}");
     println!();
