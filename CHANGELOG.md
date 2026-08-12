@@ -2,7 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.3.3] - 2026-08-11
+
+### Fixed
+- **Absolute `position=` corrupted every child node's skeleton offset:** When a transform rule set an explicit `position=(x,y,z)` (as `--values` always does when a real pivot value is present), the tool overwrote *every* `position` line found while parsing the model with that single value, collapsing the entire node hierarchy onto the root pivot's coordinate instead of only repositioning the root. Only the file's first `position` line (the model's root/pivot node) now takes the absolute override; every other node's position is transformed like a vertex (scale/rotate/translate), exactly as it already was for the default non-absolute case. `--debug` now warns when an additional `position` line is found while an absolute override is configured.
+- **`setsupermodel` line kept pointing at the source race:** The generic model-name text substitution only matches the full source stem (e.g. `pmh0_robe112`), so the bare supermodel token on the same line (e.g. `pmh0`, without the piece suffix) was never replaced, and generated race variants kept referencing the human supermodel instead of their own. `setsupermodel` now rewrites that token too, using the same wildcard `substitute` pattern applied to the model name.
 
 ## [1.3.2] - 2026-08-07
 

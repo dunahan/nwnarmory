@@ -206,7 +206,9 @@ fn run_transform(
                 src_path.display(),
                 out_path.display()
             );
-            if let Err(e) = process_model(src_path, &stem, &out_name, &out_path, t, bitmap_mode) {
+            if let Err(e) =
+                process_model(src_path, &stem, &out_name, &out_path, t, bitmap_mode, debug)
+            {
                 eprintln!("  Error in {}: {e}", src_path.display());
                 failed += 1;
                 continue;
@@ -280,6 +282,7 @@ fn process_model(
     out_path: &Path,
     t: &Transform,
     bitmap_mode: &BitmapMode,
+    debug: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Check again immediately before writing. The caller preflights collisions,
     // but this preserves the no-overwrite guarantee when a target appears while
@@ -289,7 +292,15 @@ fn process_model(
     }
 
     let tmp_path = temporary_path(out_path)?;
-    let result = process_model_inner(src_path, src_stem, dest_stem, &tmp_path, t, bitmap_mode);
+    let result = process_model_inner(
+        src_path,
+        src_stem,
+        dest_stem,
+        &tmp_path,
+        t,
+        bitmap_mode,
+        debug,
+    );
     match result {
         Ok(()) => {
             // `rename` overwrites an existing file on Unix. A hard link creates
@@ -405,6 +416,7 @@ fn process_model_inner(
     tmp_path: &Path,
     t: &Transform,
     bitmap_mode: &BitmapMode,
+    debug: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let reader = BufReader::new(fs::File::open(src_path)?);
 
@@ -420,6 +432,11 @@ fn process_model_inner(
         })?;
 
     let mut last_bitmap = String::new();
+    // Only the file's first "position" line (the model's root/pivot node, see
+    // README: "identifies the pivot point") may take an absolute override from
+    // the INI. Every other node's "position" is a local offset relative to its
+    // own parent, not a global coordinate.
+    let mut position_seen = false;
     let mut lines = reader.lines();
     let mut line_no = 0usize;
 
@@ -517,9 +534,27 @@ fn process_model_inner(
 
                 let parsed = [values[0], values[1], values[2]];
 
-                let position = match t.position {
-                    PositionMode::Absolute(position) => position,
-                    PositionMode::LikeVertex => t.apply_vertex(parsed).unwrap_or(parsed),
+                // Bugfix: PositionMode::Absolute used to overwrite EVERY node's
+                // "position" line with the same value, collapsing the entire
+                // skeleton onto the root pivot's coordinate. Only the first
+                // "position" line in the file is the root pivot; every later
+                // one is a child bone's local offset and must be transformed
+                // like a vertex regardless of the configured mode.
+                let position = if !position_seen {
+                    position_seen = true;
+                    match t.position {
+                        PositionMode::Absolute(position) => position,
+                        PositionMode::LikeVertex => t.apply_vertex(parsed).unwrap_or(parsed),
+                    }
+                } else {
+                    if debug && matches!(t.position, PositionMode::Absolute(_)) {
+                        eprintln!(
+                            "Debug: {}:{}: additional 'position' line after the first one; treating it as a vertex offset, not the absolute pivot override.",
+                            src_path.display(),
+                            line_no
+                        );
+                    }
+                    t.apply_vertex(parsed).unwrap_or(parsed)
                 };
 
                 writeln!(
@@ -531,6 +566,33 @@ fn process_model_inner(
 
             "filedependancy" | "filedependency" => {
                 writeln!(out, "{line}")?;
+            }
+
+            "setsupermodel" => {
+                // setsupermodel <modelname> <supermodelname>
+                // <modelname> is the full source stem and gets swapped like any
+                // other line via replace_no_case. <supermodelname> (e.g. "pmh0")
+                // is a bare race/phenotype code, never containing the piece
+                // suffix, so replace_no_case never matches it and it survives
+                // untouched, silently leaving the generated model pointed at
+                // the wrong race's supermodel. Apply the same wildcard
+                // substitute pattern used for the model name to this token too.
+                let model_name = it.next().ok_or_else(|| {
+                    model_error(src_path, line_no, "setsupermodel", "model name missing")
+                })?;
+                let super_name = it.next().ok_or_else(|| {
+                    model_error(
+                        src_path,
+                        line_no,
+                        "setsupermodel",
+                        "supermodel name missing",
+                    )
+                })?;
+
+                let new_model = replace_no_case(model_name, src_stem, dest_stem);
+                let new_super = build_substitute(super_name, &t.substitute);
+
+                writeln!(out, "setsupermodel {new_model} {new_super}")?;
             }
 
             _ => {
@@ -627,6 +689,7 @@ mod tests {
             &out,
             &transform,
             &BitmapMode::Keep,
+            false,
         )
         .expect_err("invalid block count must fail")
         .to_string();
@@ -636,6 +699,140 @@ mod tests {
                 && error.contains("Block 'verts'")
                 && error.contains("invalid quantity"),
             "{error}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn setsupermodel_rewrites_both_model_and_supermodel_name() {
+        let dir =
+            std::env::temp_dir().join(format!("nwnarmory-supermodel-test-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("pmh0_robe112.mdl");
+        let out = dir.join("out.tmp");
+
+        fs::write(
+            &src,
+            "newmodel pmh0_robe112\nsetsupermodel pmh0_robe112 pmh0\ndonemodel pmh0_robe112\n",
+        )
+        .unwrap();
+
+        let transform = Transform {
+            match_pat: "pm??_robe???".into(),
+            substitute: "??a*".into(),
+            scale: [1.0; 3],
+            rotate_deg: [0.0; 3],
+            translate: [0.0; 3],
+            min: [-999.0; 3],
+            max: [999.0; 3],
+            tscale: [1.0; 2],
+            trotate_z_deg: 0.0,
+            ttranslate: [0.0; 2],
+            tmin: [-999.0; 2],
+            tmax: [999.0; 2],
+            tbitmap: None,
+            position: PositionMode::LikeVertex,
+        };
+
+        process_model_inner(
+            &src,
+            "pmh0_robe112",
+            "pma0_robe112",
+            &out,
+            &transform,
+            &BitmapMode::Keep,
+            false,
+        )
+        .unwrap();
+
+        let written = fs::read_to_string(&out).unwrap();
+        assert!(
+            written.contains("setsupermodel pma0_robe112 pma0"),
+            "supermodel line not rewritten correctly: {written}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn absolute_position_only_overrides_the_first_node() {
+        let dir =
+            std::env::temp_dir().join(format!("nwnarmory-position-test-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("pmh0_test.mdl");
+        let out = dir.join("out.tmp");
+
+        // Two "position" lines: rootdummy (the pivot -- gets the absolute
+        // override) and a child bone (must be transformed like a vertex
+        // instead, or every bone in the skeleton would collapse onto the
+        // pivot's coordinate).
+        fs::write(
+            &src,
+            "newmodel pmh0_test\n\
+             beginmodelgeom pmh0_test\n\
+             node dummy rootdummy\n\
+             parent NULL\n\
+             position 1.0 2.0 3.0\n\
+             endnode\n\
+             node trimesh child_g\n\
+             parent rootdummy\n\
+             position 0.5 0.5 0.5\n\
+             endnode\n\
+             endmodelgeom pmh0_test\n\
+             donemodel pmh0_test\n",
+        )
+        .unwrap();
+
+        let transform = Transform {
+            match_pat: "pm??_test".into(),
+            substitute: "??a*".into(),
+            scale: [2.0, 2.0, 2.0],
+            rotate_deg: [0.0; 3],
+            translate: [0.0; 3],
+            min: [-999.0; 3],
+            max: [999.0; 3],
+            tscale: [1.0; 2],
+            trotate_z_deg: 0.0,
+            ttranslate: [0.0; 2],
+            tmin: [-999.0; 2],
+            tmax: [999.0; 2],
+            tbitmap: None,
+            position: PositionMode::Absolute([9.0, 9.0, 9.0]),
+        };
+
+        process_model_inner(
+            &src,
+            "pmh0_test",
+            "pma0_test",
+            &out,
+            &transform,
+            &BitmapMode::Keep,
+            false,
+        )
+        .unwrap();
+
+        let written = fs::read_to_string(&out).unwrap();
+        let positions: Vec<&str> = written
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("position "))
+            .collect();
+
+        assert_eq!(positions.len(), 2, "expected 2 position lines: {written}");
+        assert_eq!(
+            positions[0], "position 9.0000000 9.0000000 9.0000000",
+            "first position (root pivot) must take the absolute override: {written}"
+        );
+        assert_eq!(
+            positions[1], "position 1.0000000 1.0000000 1.0000000",
+            "second position (child bone) must be scaled like a vertex, not overwritten: {written}"
         );
 
         let _ = fs::remove_dir_all(&dir);
