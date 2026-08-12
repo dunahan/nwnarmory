@@ -299,7 +299,7 @@ fn process_model(
         &tmp_path, 
         t, 
         bitmap_mode, 
-        debug
+        debug,
     );
     match result {
         Ok(()) => {
@@ -757,7 +757,7 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
     }
-    
+
     #[test]
     fn absolute_position_only_overrides_the_first_node() {
         let dir =
