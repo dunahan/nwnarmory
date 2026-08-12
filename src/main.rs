@@ -292,8 +292,15 @@ fn process_model(
     }
 
     let tmp_path = temporary_path(out_path)?;
-    let result =
-        process_model_inner(src_path, src_stem, dest_stem, &tmp_path, t, bitmap_mode, debug);
+    let result = process_model_inner(
+        src_path, 
+        src_stem, 
+        dest_stem, 
+        &tmp_path, 
+        t, 
+        bitmap_mode, 
+        debug
+    );
     match result {
         Ok(()) => {
             // `rename` overwrites an existing file on Unix. A hard link creates
@@ -751,7 +758,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
     
-#[test]
+    #[test]
     fn absolute_position_only_overrides_the_first_node() {
         let dir =
             std::env::temp_dir().join(format!("nwnarmory-position-test-{}", std::process::id()));
