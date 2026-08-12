@@ -1,6 +1,6 @@
 # NWNArmory
 
-**Current release: 1.3.2**
+[![Latest Release](https://img.shields.io/github/v/release/dunahan/nwnarmory?label=Release&color=c8a44a)](https://github.com/dunahan/nwnarmory/releases/latest)
 
 **A Neverwinter Nights Model Rescaling CLI Tool**
 
@@ -28,7 +28,7 @@ The original C++ codebase has been completely rewritten in **Rust**. This transi
 
 Building upon the original v1.2 logic (which introduced absolute translation, minimum/maximum parameters, and texture map scaling), the Rust CLI focuses on deterministic transformations and safe batch processing:
 
-*   **High-Precision Vertex & Node Transformations:** Transformation matrices (scale, rotation, and absolute translation/position) are calibrated for reliable alignment of body parts across race variants.
+*   **High-Precision Vertex & Node Transformations:** Transformation matrices (scale, rotation, and translation) are calibrated for reliable alignment of body parts across race variants; an optional absolute `position=` override repositions only the model's root/pivot node, never an individual body part.
 *   **Normals-aware processing:** Explicit `normals` blocks are transformed using the inverse-transpose of the scale/rotation matrix and normalized, which preserves correct lighting under non-uniform scale.
 *   **Safe File Writing:** Output is first written to an exclusively created `.tmp` file. The temporary file is removed when model processing fails, so a truncated model never becomes a target file.
 *   **No accidental overwrite:** An existing target file is preserved. If a source/rule pair would produce an existing target name, or if two results in the same run would use the same name, the affected result is skipped and reported.
@@ -122,7 +122,7 @@ When defining `match=` and `substitute=` strings, you can use wildcards:
 *   `scale=(x, y, z)`: Applies x, y, and z-axis scaling.
 *   `rotate=(x, y, z)`: Applies x, y, and z-axis rotation.
 *   `translate=(x, y, z)`: Applies absolute x, y, and z-axis translation.
-*   `position=(x, y, z)`: Specifies the absolute position parameter (which identifies the pivot point for armor parts).
+*   `position=(x, y, z)`: Specifies the absolute position of the model's root/pivot node — the first `position` line in the file, which identifies the pivot point for armor parts. It does not affect any other node: every child bone's own `position` (its offset relative to its parent) is always transformed like a vertex (scale/rotate/translate), never overwritten.
 *   `minimum=(x, y, z)` & `maximum=(x, y, z)`: If a vertex falls outside these minimum/maximum coordinate bounds, it will not be transformed.
 
 ### Texture Map Parameters
