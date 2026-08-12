@@ -293,12 +293,12 @@ fn process_model(
 
     let tmp_path = temporary_path(out_path)?;
     let result = process_model_inner(
-        src_path, 
-        src_stem, 
-        dest_stem, 
-        &tmp_path, 
-        t, 
-        bitmap_mode, 
+        src_path,
+        src_stem,
+        dest_stem,
+        &tmp_path,
+        t,
+        bitmap_mode,
         debug,
     );
     match result {
