@@ -796,7 +796,15 @@ mod tests {
             debug: false,
         };
 
-        process_model_inner(&src, "pmh0_robe112", "pma0_robe112", &out, &transform, &options).unwrap();
+        process_model_inner(
+            &src,
+            "pmh0_robe112",
+            "pma0_robe112",
+            &out,
+            &transform,
+            &options,
+        )
+        .unwrap();
 
         let written = fs::read_to_string(&out).unwrap();
         assert!(
