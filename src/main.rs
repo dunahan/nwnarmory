@@ -132,6 +132,12 @@ fn parse_materialname_mode(args: &[String]) -> MaterialnameMode {
     MaterialnameMode::Keep
 }
 
+struct ModelOptions<'a> {
+    bitmap_mode: &'a BitmapMode,
+    materialname_mode: &'a MaterialnameMode,
+    debug: bool,
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -197,6 +203,12 @@ fn run_transform(
     }
     fs::create_dir_all(&dest_dir)?;
 
+    let options = ModelOptions {
+        bitmap_mode,
+        materialname_mode,
+        debug,
+    };
+
     let mut reserved: HashSet<PathBuf> = HashSet::new();
     let mut processed = 0usize;
     let mut skipped_collisions = 0usize;
@@ -251,9 +263,7 @@ fn run_transform(
                 &out_name,
                 &out_path,
                 t,
-                bitmap_mode,
-                materialname_mode,
-                debug,
+                &options,
             ) {
                 eprintln!("  Error in {}: {e}", src_path.display());
                 failed += 1;
@@ -263,7 +273,7 @@ fn run_transform(
         }
         if !matched_any {
             eprintln!("Warning: '{}' does not match any transform rule, skipped. Use --debug for details.", src_path.display());
-            if debug {
+            if options.debug {
                 eprintln!("  Model name (stem): '{stem}'");
                 eprintln!(
                     "  Loaded match patterns: {}",
@@ -327,9 +337,7 @@ fn process_model(
     dest_stem: &str,
     out_path: &Path,
     t: &Transform,
-    bitmap_mode: &BitmapMode,
-    materialname_mode: &MaterialnameMode,
-    debug: bool,
+    options: &ModelOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Check again immediately before writing. The caller preflights collisions,
     // but this preserves the no-overwrite guarantee when a target appears while
@@ -345,9 +353,7 @@ fn process_model(
         dest_stem,
         &tmp_path,
         t,
-        bitmap_mode,
-        materialname_mode,
-        debug,
+        options,
     );
     match result {
         Ok(()) => {
@@ -463,9 +469,7 @@ fn process_model_inner(
     dest_stem: &str,
     tmp_path: &Path,
     t: &Transform,
-    bitmap_mode: &BitmapMode,
-    materialname_mode: &MaterialnameMode,
-    debug: bool,
+    options: &ModelOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let reader = BufReader::new(fs::File::open(src_path)?);
 
@@ -568,7 +572,7 @@ fn process_model_inner(
                 last_bitmap = name.to_lowercase();
 
                 let indent = &line[..line.len() - trimmed.len()];
-                let out_line = match bitmap_mode {
+                let out_line = match options.bitmap_mode {
                     BitmapMode::Keep => line.clone(),
                     BitmapMode::RenameToModel => replace_no_case(&line, src_stem, dest_stem),
                     BitmapMode::RenameTo(name) => format!("{indent}bitmap {name}"),
@@ -583,7 +587,7 @@ fn process_model_inner(
                 })?;
 
                 let indent = &line[..line.len() - trimmed.len()];
-                let out_line = match materialname_mode {
+                let out_line = match options.materialname_mode {
                     MaterialnameMode::Keep => line.clone(),
                     MaterialnameMode::RenameToModel => replace_no_case(&line, src_stem, dest_stem),
                     MaterialnameMode::RenameTo(name) => format!("{indent}materialname {name}"),
@@ -611,7 +615,7 @@ fn process_model_inner(
                         PositionMode::LikeVertex => t.apply_vertex(parsed).unwrap_or(parsed),
                     }
                 } else {
-                    if debug && matches!(t.position, PositionMode::Absolute(_)) {
+                    if options.debug && matches!(t.position, PositionMode::Absolute(_)) {
                         eprintln!(
                             "Debug: {}:{}: additional 'position' line after the first one; treating it as a vertex offset, not the absolute pivot override.",
                             src_path.display(),
@@ -746,15 +750,19 @@ mod tests {
             position: PositionMode::LikeVertex,
         };
 
+        let options = ModelOptions {
+            bitmap_mode: &BitmapMode::Keep,
+            materialname_mode: &MaterialnameMode::Keep,
+            debug: false,
+        };
+
         let error = process_model_inner(
             &src,
             "broken",
             "broken",
             &out,
             &transform,
-            &BitmapMode::Keep,
-            &MaterialnameMode::Keep,
-            false,
+            &options,
         )
         .expect_err("invalid block count must fail")
         .to_string();
@@ -803,15 +811,19 @@ mod tests {
             position: PositionMode::LikeVertex,
         };
 
+        let options = ModelOptions {
+            bitmap_mode: &BitmapMode::Keep,
+            materialname_mode: &MaterialnameMode::Keep,
+            debug: false,
+        };
+
         process_model_inner(
             &src,
             "pmh0_robe112",
             "pma0_robe112",
             &out,
             &transform,
-            &BitmapMode::Keep,
-            &MaterialnameMode::Keep,
-            false,
+            &options,
         )
         .unwrap();
 
@@ -873,15 +885,19 @@ mod tests {
             position: PositionMode::Absolute([9.0, 9.0, 9.0]),
         };
 
+        let options = ModelOptions {
+            bitmap_mode: &BitmapMode::Keep,
+            materialname_mode: &MaterialnameMode::Keep,
+            debug: false,
+        };
+
         process_model_inner(
             &src,
             "pmh0_test",
             "pma0_test",
             &out,
             &transform,
-            &BitmapMode::Keep,
-            &MaterialnameMode::Keep,
-            false,
+            &options,
         )
         .unwrap();
 
@@ -941,15 +957,18 @@ mod tests {
         let run = |mode: &MaterialnameMode| -> String {
             let out = dir.join("out.tmp");
             let _ = fs::remove_file(&out);
+            let options = ModelOptions {
+                bitmap_mode: &BitmapMode::Keep,
+                materialname_mode: mode,
+                debug: false,
+            };
             process_model_inner(
                 &src,
                 "pmh0_robe112",
                 "pma0_robe112",
                 &out,
                 &transform,
-                &BitmapMode::Keep,
-                mode,
-                false,
+                &options,
             )
             .unwrap();
             fs::read_to_string(&out).unwrap()
