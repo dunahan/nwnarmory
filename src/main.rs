@@ -32,10 +32,13 @@
 //   - `animverts`/`animtverts` (EE animmesh position/UV keyframes) reuse
 //     `write_transformed_verts`/`write_transformed_tverts` as-is: same
 //     "N vec3 lines" layout as `verts`/`tverts`, no new transform needed.
-//   - `materialname`, `weights`, `constraints` still pass through as
-//     text-only (unchanged from the model's source values), same as every
-//     other unrecognised line. Tracked as follow-up work, not yet handled
-//     here.
+//   - `materialname` (an .mtr material filename) gets its own Keep/rename
+//     mode via `--rename-materialname[=NAME]`, mirroring `bitmap`'s
+//     `--rename-bitmap` -- same rationale: renaming is rarely what modders
+//     want (see NWNArmory-Analysis.md #6 / CHANGELOG 1.2.4).
+//   - `weights`, `constraints` still pass through as text-only (unchanged
+//     from the model's source values), same as every other unrecognised
+//     line. Tracked as follow-up work, not yet handled here.
 
 mod fit;
 mod transform;
@@ -57,7 +60,7 @@ fn main() {
 }
 
 fn print_usage() {
-    eprintln!("Usage: nwnarmory [--debug|-d] [--rename-bitmap[=NAME]] <transforms.ini> <source_file_or_folder> <target_folder>");
+    eprintln!("Usage: nwnarmory [--debug|-d] [--rename-bitmap[=NAME]] [--rename-materialname[=NAME]] <transforms.ini> <source_file_or_folder> <target_folder>");
     eprintln!("       nwnarmory [--values|-v] <source.mdl> <target.mdl>");
     eprintln!();
     eprintln!("Applies the scaling/rotation/translation rules defined in <transforms.ini>");
@@ -69,6 +72,11 @@ fn print_usage() {
     );
     eprintln!("                             Bare flag: substitute the model name into it, like the old default.");
     eprintln!("                             With =NAME: set the bitmap line to that literal texture name instead.");
+    eprintln!(
+        "  --rename-materialname[=NAME]; Off by default: the materialname line is left untouched, same as bitmap."
+    );
+    eprintln!("                             Bare flag: substitute the model name into it.");
+    eprintln!("                             With =NAME: set the materialname line to that literal name instead.");
 }
 
 /// What to do with a `bitmap <name>` line while rewriting a model.
@@ -98,6 +106,32 @@ fn parse_bitmap_mode(args: &[String]) -> BitmapMode {
     BitmapMode::Keep
 }
 
+/// What to do with a `materialname <name>` line while rewriting a model.
+/// ponytail: same rationale and default as BitmapMode -- Keep by default,
+/// renaming is opt-in (see NWNArmory-Analysis.md #6 / CHANGELOG 1.2.4).
+enum MaterialnameMode {
+    /// Leave the materialname line exactly as in the source file.
+    Keep,
+    /// Substitute the model name into the materialname line.
+    RenameToModel,
+    /// Replace the materialname value with this fixed name.
+    RenameTo(String),
+}
+
+/// Parses `--rename-materialname` / `--rename-materialname=NAME` out of the
+/// raw args. Returns MaterialnameMode::Keep if the flag is absent.
+fn parse_materialname_mode(args: &[String]) -> MaterialnameMode {
+    for a in args {
+        if let Some(name) = a.strip_prefix("--rename-materialname=") {
+            return MaterialnameMode::RenameTo(name.to_string());
+        }
+        if a == "--rename-materialname" {
+            return MaterialnameMode::RenameToModel;
+        }
+    }
+    MaterialnameMode::Keep
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
 
@@ -115,6 +149,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let debug = raw_args.iter().any(|a| a == "--debug" || a == "-d");
     let bitmap_mode = parse_bitmap_mode(&raw_args);
+    let materialname_mode = parse_materialname_mode(&raw_args);
 
     let args: Vec<String> = raw_args
         .into_iter()
@@ -123,6 +158,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 && a != "-d"
                 && a != "--rename-bitmap"
                 && !a.starts_with("--rename-bitmap=")
+                && a != "--rename-materialname"
+                && !a.starts_with("--rename-materialname=")
         })
         .collect();
 
@@ -136,6 +173,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         PathBuf::from(&args[2]),
         debug,
         &bitmap_mode,
+        &materialname_mode,
     )
 }
 
@@ -145,6 +183,7 @@ fn run_transform(
     dest_dir: PathBuf,
     debug: bool,
     bitmap_mode: &BitmapMode,
+    materialname_mode: &MaterialnameMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ini_text = fs::read_to_string(ini_path)
         .map_err(|e| format!("cannot read INI file '{ini_path}': {e}"))?;
@@ -206,9 +245,16 @@ fn run_transform(
                 src_path.display(),
                 out_path.display()
             );
-            if let Err(e) =
-                process_model(src_path, &stem, &out_name, &out_path, t, bitmap_mode, debug)
-            {
+            if let Err(e) = process_model(
+                src_path,
+                &stem,
+                &out_name,
+                &out_path,
+                t,
+                bitmap_mode,
+                materialname_mode,
+                debug,
+            ) {
                 eprintln!("  Error in {}: {e}", src_path.display());
                 failed += 1;
                 continue;
@@ -282,6 +328,7 @@ fn process_model(
     out_path: &Path,
     t: &Transform,
     bitmap_mode: &BitmapMode,
+    materialname_mode: &MaterialnameMode,
     debug: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Check again immediately before writing. The caller preflights collisions,
@@ -299,6 +346,7 @@ fn process_model(
         &tmp_path,
         t,
         bitmap_mode,
+        materialname_mode,
         debug,
     );
     match result {
@@ -416,6 +464,7 @@ fn process_model_inner(
     tmp_path: &Path,
     t: &Transform,
     bitmap_mode: &BitmapMode,
+    materialname_mode: &MaterialnameMode,
     debug: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let reader = BufReader::new(fs::File::open(src_path)?);
@@ -523,6 +572,21 @@ fn process_model_inner(
                     BitmapMode::Keep => line.clone(),
                     BitmapMode::RenameToModel => replace_no_case(&line, src_stem, dest_stem),
                     BitmapMode::RenameTo(name) => format!("{indent}bitmap {name}"),
+                };
+
+                writeln!(out, "{out_line}")?;
+            }
+
+            "materialname" => {
+                it.next().ok_or_else(|| {
+                    model_error(src_path, line_no, "materialname", "Key/Value missing")
+                })?;
+
+                let indent = &line[..line.len() - trimmed.len()];
+                let out_line = match materialname_mode {
+                    MaterialnameMode::Keep => line.clone(),
+                    MaterialnameMode::RenameToModel => replace_no_case(&line, src_stem, dest_stem),
+                    MaterialnameMode::RenameTo(name) => format!("{indent}materialname {name}"),
                 };
 
                 writeln!(out, "{out_line}")?;
@@ -689,6 +753,7 @@ mod tests {
             &out,
             &transform,
             &BitmapMode::Keep,
+            &MaterialnameMode::Keep,
             false,
         )
         .expect_err("invalid block count must fail")
@@ -745,6 +810,7 @@ mod tests {
             &out,
             &transform,
             &BitmapMode::Keep,
+            &MaterialnameMode::Keep,
             false,
         )
         .unwrap();
@@ -814,6 +880,7 @@ mod tests {
             &out,
             &transform,
             &BitmapMode::Keep,
+            &MaterialnameMode::Keep,
             false,
         )
         .unwrap();
@@ -833,6 +900,71 @@ mod tests {
         assert_eq!(
             positions[1], "position 1.0000000 1.0000000 1.0000000",
             "second position (child bone) must be scaled like a vertex, not overwritten: {written}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn materialname_defaults_to_keep_and_supports_rename_modes() {
+        let dir = std::env::temp_dir()
+            .join(format!("nwnarmory-materialname-test-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("pmh0_robe112.mdl");
+        fs::write(
+            &src,
+            "newmodel pmh0_robe112\nmaterialname pmh0_robe112\ndonemodel pmh0_robe112\n",
+        )
+        .unwrap();
+
+        let transform = Transform {
+            match_pat: "pm??_robe???".into(),
+            substitute: "??a*".into(),
+            scale: [1.0; 3],
+            rotate_deg: [0.0; 3],
+            translate: [0.0; 3],
+            min: [-999.0; 3],
+            max: [999.0; 3],
+            tscale: [1.0; 2],
+            trotate_z_deg: 0.0,
+            ttranslate: [0.0; 2],
+            tmin: [-999.0; 2],
+            tmax: [999.0; 2],
+            tbitmap: None,
+            position: PositionMode::LikeVertex,
+        };
+
+        let run = |mode: &MaterialnameMode| -> String {
+            let out = dir.join("out.tmp");
+            let _ = fs::remove_file(&out);
+            process_model_inner(
+                &src,
+                "pmh0_robe112",
+                "pma0_robe112",
+                &out,
+                &transform,
+                &BitmapMode::Keep,
+                mode,
+                false,
+            )
+            .unwrap();
+            fs::read_to_string(&out).unwrap()
+        };
+
+        assert!(
+            run(&MaterialnameMode::Keep).contains("materialname pmh0_robe112"),
+            "Keep must leave the materialname line untouched"
+        );
+        assert!(
+            run(&MaterialnameMode::RenameToModel).contains("materialname pma0_robe112"),
+            "RenameToModel must substitute the target model name"
+        );
+        assert!(
+            run(&MaterialnameMode::RenameTo("custom_mtr".into()))
+                .contains("materialname custom_mtr"),
+            "RenameTo must set the literal material name"
         );
 
         let _ = fs::remove_dir_all(&dir);

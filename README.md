@@ -58,7 +58,8 @@ nwnarmory NWNArmoryv121.ini pmh0_chest001.mdl ./created
 *   `<source_file_or_folder>`: A single `.mdl` file or a directory containing multiple `.mdl` files.
 *   `<target_folder>`: The directory where the transformed models will be saved.
 *   `--debug` / `-d`: Prints ignored/erroneous INI lines and diagnostics for models that matched no transform rule.
-*   `--rename-bitmap[=NAME]`: See "Texture (Bitmap) Renaming" below.
+*   `--rename-bitmap[=NAME]`: See "Texture & Material Name Renaming" below.
+*   `--rename-materialname[=NAME]`: See "Texture & Material Name Renaming" below.
 
 - Deriving transform values from two already-fitted models:
 ```bash
@@ -94,14 +95,16 @@ This fits `scale`, `rotate`, `translate` (least-squares over the `verts` block),
 
 **Note:** this requires vertex correspondence — both models must have the same vertex count and order, i.e. the target was never remeshed relative to the source. This holds for genuine NWNArmory-style race variants.
 
-## 🖼️ Texture (Bitmap) Renaming
+## 🖼️ Texture & Material Name Renaming
 
-By default, the `bitmap` line in generated models is left exactly as in the source file. The very old original tool always tried to rename it to match the new model name; in practice this was rarely what modders wanted, so it's now opt-in:
+By default, the `bitmap` and `materialname` lines in generated models are left exactly as in the source file. The very old original tool always tried to rename `bitmap` to match the new model name; in practice this was rarely what modders wanted, so both are opt-in:
 
 *   `--rename-bitmap`: substitutes the newly generated model name into the `bitmap` line (the historic default behavior).
 *   `--rename-bitmap=NAME`: sets the `bitmap` line to the literal texture name `NAME`, regardless of the generated model name.
+*   `--rename-materialname`: substitutes the newly generated model name into the `materialname` line (the `.mtr` material file reference).
+*   `--rename-materialname=NAME`: sets the `materialname` line to the literal material name `NAME`, regardless of the generated model name.
 
-Omit the flag entirely if your texture names are independent of the model name (the common case).
+Omit either flag if your texture/material names are independent of the model name (the common case). The two flags are independent of each other — set one, both, or neither.
 
 ## ⚠️ Important Prerequisites
 
