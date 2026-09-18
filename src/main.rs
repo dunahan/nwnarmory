@@ -862,8 +862,7 @@ mod tests {
             debug: false,
         };
 
-        process_model_inner(&src, "pmh0_test", "pma0_test", &out, &transform, &options)
-        .unwrap();
+        process_model_inner(&src, "pmh0_test", "pma0_test", &out, &transform, &options).unwrap();
 
         let written = fs::read_to_string(&out).unwrap();
         let positions: Vec<&str> = written
