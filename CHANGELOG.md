@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **`--rename-materialname[=NAME]` flag:** New opt-in control over the `materialname` line (the `.mtr` material file reference), mirroring `--rename-bitmap`. Bare flag substitutes the newly generated model name in; `--rename-materialname=NAME` sets the line to that literal material name instead.
+
+### Changed
+- **Behavior:** the `materialname` line is now left unchanged by default. Previously it fell through to the generic model-name substitution applied to every unrecognised line, so it was silently rewritten whenever the source material name happened to contain the source model's stem. This matched neither `bitmap`'s deliberate default (see 1.2.4) nor most modders' expectations. Pass `--rename-materialname` to get the old passthrough-rename behavior back.
+
 ## [1.3.3] - 2026-08-11
 
 ### Fixed
