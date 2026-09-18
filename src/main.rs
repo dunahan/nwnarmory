@@ -257,14 +257,7 @@ fn run_transform(
                 src_path.display(),
                 out_path.display()
             );
-            if let Err(e) = process_model(
-                src_path,
-                &stem,
-                &out_name,
-                &out_path,
-                t,
-                &options,
-            ) {
+            if let Err(e) = process_model(src_path, &stem, &out_name, &out_path, t, &options) {
                 eprintln!("  Error in {}: {e}", src_path.display());
                 failed += 1;
                 continue;
@@ -347,14 +340,7 @@ fn process_model(
     }
 
     let tmp_path = temporary_path(out_path)?;
-    let result = process_model_inner(
-        src_path,
-        src_stem,
-        dest_stem,
-        &tmp_path,
-        t,
-        options,
-    );
+    let result = process_model_inner(src_path, src_stem, dest_stem, &tmp_path, t, options);
     match result {
         Ok(()) => {
             // `rename` overwrites an existing file on Unix. A hard link creates
@@ -756,16 +742,9 @@ mod tests {
             debug: false,
         };
 
-        let error = process_model_inner(
-            &src,
-            "broken",
-            "broken",
-            &out,
-            &transform,
-            &options,
-        )
-        .expect_err("invalid block count must fail")
-        .to_string();
+        let error = process_model_inner(&src, "broken", "broken", &out, &transform, &options)
+            .expect_err("invalid block count must fail")
+            .to_string();
 
         assert!(
             error.contains("broken.mdl:2")
@@ -817,15 +796,7 @@ mod tests {
             debug: false,
         };
 
-        process_model_inner(
-            &src,
-            "pmh0_robe112",
-            "pma0_robe112",
-            &out,
-            &transform,
-            &options,
-        )
-        .unwrap();
+        process_model_inner(&src, "pmh0_test", "pma0_test", &out, &transform, &options).unwrap();
 
         let written = fs::read_to_string(&out).unwrap();
         assert!(
