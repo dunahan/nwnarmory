@@ -36,9 +36,14 @@
 //     mode via `--rename-materialname[=NAME]`, mirroring `bitmap`'s
 //     `--rename-bitmap` -- same rationale: renaming is rarely what modders
 //     want (see NWNArmory-Analysis.md #6 / CHANGELOG 1.2.4).
-//   - `weights`, `constraints` still pass through as text-only (unchanged
-//     from the model's source values), same as every other unrecognised
-//     line. Tracked as follow-up work, not yet handled here.
+//   - `weights` (skin bone-name/weight pairs) and `constraints`
+//     (danglymesh per-vertex rigidity, 0-100, unitless -- see
+//     nwn-mdl-format docs) are now consumed as counted blocks, same as
+//     `verts`/`tverts`, so a truncated/malformed block is rejected with
+//     the same clear diagnostic instead of silently under-writing the
+//     declared count. Neither is transformed: bone weights and rigidity
+//     fractions are not scale-dependent distances, so every line is
+//     copied through verbatim.
 
 mod fit;
 mod transform;
@@ -550,6 +555,25 @@ fn process_model_inner(
                 }
             }
 
+            // `weights` (skin) and `constraints` (danglymesh) carry no
+            // scale-dependent geometry -- weights are bone-name/weight pairs
+            // (skinning), constraints are a unitless 0-100 rigidity fraction
+            // -- so neither goes through apply_vertex/apply_normal. Consuming
+            // them as a counted block only buys the same truncation/EOF
+            // protection verts/tverts already have; each line is copied
+            // through unchanged.
+            "weights" | "constraints" => {
+                let block = keyword.as_str();
+                let count = parse_block_count(src_path, line_no, block, it.next())?;
+
+                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
+
+                for _ in 0..count {
+                    let item_line = next_block_line(&mut lines, &mut line_no, src_path, block)?;
+                    writeln!(out, "{item_line}")?;
+                }
+            }
+
             "bitmap" => {
                 let name = it
                     .next()
@@ -699,6 +723,38 @@ fn replace_no_case(line: &str, from: &str, to: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Neutral baseline for tests that only care about a couple of fields:
+    /// no scale/rotate/translate, full min/max range, no tbitmap filter.
+    /// Mirrors `transform::tests::identity_transform` -- same rationale.
+    fn identity_transform() -> Transform {
+        Transform {
+            match_pat: String::new(),
+            substitute: String::new(),
+            scale: [1.0, 1.0, 1.0],
+            rotate_deg: [0.0, 0.0, 0.0],
+            translate: [0.0, 0.0, 0.0],
+            min: [-999.0, -999.0, -999.0],
+            max: [999.0, 999.0, 999.0],
+            tscale: [1.0, 1.0],
+            trotate_z_deg: 0.0,
+            ttranslate: [0.0, 0.0],
+            tmin: [-999.0, -999.0],
+            tmax: [999.0, 999.0],
+            tbitmap: None,
+            position: PositionMode::LikeVertex,
+        }
+    }
+
+    /// The common case: bitmap and materialname both left untouched, no
+    /// --debug. Individual fields can still be overridden with `..keep_options()`.
+    fn keep_options() -> ModelOptions<'static> {
+        ModelOptions {
+            bitmap_mode: &BitmapMode::Keep,
+            materialname_mode: &MaterialnameMode::Keep,
+            debug: false,
+        }
+    }
+
     #[test]
     fn replace_no_case_basic() {
         assert_eq!(
@@ -722,25 +778,9 @@ mod tests {
         let transform = Transform {
             match_pat: "broken".into(),
             substitute: "broken".into(),
-            scale: [1.0; 3],
-            rotate_deg: [0.0; 3],
-            translate: [0.0; 3],
-            min: [-999.0; 3],
-            max: [999.0; 3],
-            tscale: [1.0; 2],
-            trotate_z_deg: 0.0,
-            ttranslate: [0.0; 2],
-            tmin: [-999.0; 2],
-            tmax: [999.0; 2],
-            tbitmap: None,
-            position: PositionMode::LikeVertex,
+            ..identity_transform()
         };
-
-        let options = ModelOptions {
-            bitmap_mode: &BitmapMode::Keep,
-            materialname_mode: &MaterialnameMode::Keep,
-            debug: false,
-        };
+        let options = keep_options();
 
         let error = process_model_inner(&src, "broken", "broken", &out, &transform, &options)
             .expect_err("invalid block count must fail")
@@ -776,25 +816,9 @@ mod tests {
         let transform = Transform {
             match_pat: "pm??_robe???".into(),
             substitute: "??a*".into(),
-            scale: [1.0; 3],
-            rotate_deg: [0.0; 3],
-            translate: [0.0; 3],
-            min: [-999.0; 3],
-            max: [999.0; 3],
-            tscale: [1.0; 2],
-            trotate_z_deg: 0.0,
-            ttranslate: [0.0; 2],
-            tmin: [-999.0; 2],
-            tmax: [999.0; 2],
-            tbitmap: None,
-            position: PositionMode::LikeVertex,
+            ..identity_transform()
         };
-
-        let options = ModelOptions {
-            bitmap_mode: &BitmapMode::Keep,
-            materialname_mode: &MaterialnameMode::Keep,
-            debug: false,
-        };
+        let options = keep_options();
 
         process_model_inner(
             &src,
@@ -851,24 +875,10 @@ mod tests {
             match_pat: "pm??_test".into(),
             substitute: "??a*".into(),
             scale: [2.0, 2.0, 2.0],
-            rotate_deg: [0.0; 3],
-            translate: [0.0; 3],
-            min: [-999.0; 3],
-            max: [999.0; 3],
-            tscale: [1.0; 2],
-            trotate_z_deg: 0.0,
-            ttranslate: [0.0; 2],
-            tmin: [-999.0; 2],
-            tmax: [999.0; 2],
-            tbitmap: None,
             position: PositionMode::Absolute([9.0, 9.0, 9.0]),
+            ..identity_transform()
         };
-
-        let options = ModelOptions {
-            bitmap_mode: &BitmapMode::Keep,
-            materialname_mode: &MaterialnameMode::Keep,
-            debug: false,
-        };
+        let options = keep_options();
 
         process_model_inner(&src, "pmh0_test", "pma0_test", &out, &transform, &options).unwrap();
 
@@ -911,27 +921,15 @@ mod tests {
         let transform = Transform {
             match_pat: "pm??_robe???".into(),
             substitute: "??a*".into(),
-            scale: [1.0; 3],
-            rotate_deg: [0.0; 3],
-            translate: [0.0; 3],
-            min: [-999.0; 3],
-            max: [999.0; 3],
-            tscale: [1.0; 2],
-            trotate_z_deg: 0.0,
-            ttranslate: [0.0; 2],
-            tmin: [-999.0; 2],
-            tmax: [999.0; 2],
-            tbitmap: None,
-            position: PositionMode::LikeVertex,
+            ..identity_transform()
         };
 
         let run = |mode: &MaterialnameMode| -> String {
             let out = dir.join("out.tmp");
             let _ = fs::remove_file(&out);
             let options = ModelOptions {
-                bitmap_mode: &BitmapMode::Keep,
                 materialname_mode: mode,
-                debug: false,
+                ..keep_options()
             };
             process_model_inner(
                 &src,
@@ -957,6 +955,111 @@ mod tests {
             run(&MaterialnameMode::RenameTo("custom_mtr".into()))
                 .contains("materialname custom_mtr"),
             "RenameTo must set the literal material name"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn weights_and_constraints_pass_through_verbatim() {
+        let dir =
+            std::env::temp_dir().join(format!("nwnarmory-weights-test-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("pmh0_cloak001.mdl");
+        let out = dir.join("out.tmp");
+
+        // Bone-name/weight pairs (weights) and per-vertex rigidity fractions
+        // (constraints) -- neither contains the model stem, and neither is a
+        // position/normal, so both must survive byte-for-byte.
+        fs::write(
+            &src,
+            "newmodel pmh0_cloak001
+             weights 2
+             lhand 1.0
+             neck 0.75 lshoulder 0.25
+             constraints 2
+             0.0
+             55.5
+             donemodel pmh0_cloak001
+",
+        )
+        .unwrap();
+
+        let transform = Transform {
+            match_pat: "pm??_cloak???".into(),
+            substitute: "??a*".into(),
+            scale: [2.0, 2.0, 2.0],
+            ..identity_transform()
+        };
+        let options = keep_options();
+
+        process_model_inner(
+            &src,
+            "pmh0_cloak001",
+            "pma0_cloak001",
+            &out,
+            &transform,
+            &options,
+        )
+        .unwrap();
+
+        let written = fs::read_to_string(&out).unwrap();
+        assert!(written.contains("weights 2"), "{written}");
+        assert!(written.contains("lhand 1.0"), "{written}");
+        assert!(
+            written.contains("neck 0.75 lshoulder 0.25"),
+            "weight line with 2 bones must survive unchanged: {written}"
+        );
+        assert!(written.contains("constraints 2"), "{written}");
+        assert!(written.contains("0.0"), "{written}");
+        assert!(
+            written.contains("55.5"),
+            "rigidity value must not be scaled: {written}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn truncated_weights_block_is_rejected_with_context() {
+        let dir =
+            std::env::temp_dir().join(format!("nwnarmory-weights-eof-test-{}", std::process::id()));
+
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("broken.mdl");
+        let out = dir.join("broken.tmp");
+
+        // Declares 5 weight lines but the file ends after 1 -- must be
+        // rejected instead of silently writing an under-populated block.
+        fs::write(
+            &src,
+            "newmodel broken
+weights 5
+lhand 1.0
+",
+        )
+        .unwrap();
+
+        let transform = Transform {
+            match_pat: "broken".into(),
+            substitute: "broken".into(),
+            ..identity_transform()
+        };
+        let options = keep_options();
+
+        let error = process_model_inner(&src, "broken", "broken", &out, &transform, &options)
+            .expect_err("truncated weights block must fail")
+            .to_string();
+
+        assert!(
+            error.contains("broken.mdl:4")
+                && error.contains("Block 'weights'")
+                && error.contains("unexpected end of file"),
+            "{error}"
         );
 
         let _ = fs::remove_dir_all(&dir);
