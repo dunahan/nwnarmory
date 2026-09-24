@@ -106,6 +106,16 @@ By default, the `bitmap` and `materialname` lines in generated models are left e
 
 Omit either flag if your texture/material names are independent of the model name (the common case). The two flags are independent of each other — set one, both, or neither.
 
+## 🧩 Original & EE Model Support
+
+The tool is at full behavioral parity with the original (pre-Enhanced-Edition) NWNArmory for every field
+it documented -- plus two bugfixes the original never had (see `CHANGELOG.md` 1.3.3). It also reads and
+correctly transforms the NWN:EE ASCII additions: `normals`, `tangents`, extra UV channels
+(`tverts1`/`2`/`3`), `animverts`/`animtverts`, `materialname`, `weights`, and `constraints`. A small set
+of EE fields (per-vertex `colors`, animated keyframe controllers, walkmesh/AABB data) aren't handled yet
+-- see [`docs/rust-port-format-coverage.md`](docs/rust-port-format-coverage.md) for the full, current
+breakdown of what's covered, what's open, and what's deliberately out of scope.
+
 ## ⚠️ Important Prerequisites
 
 *   **ASCII Format Required:** NWNArmory strictly processes ASCII model files. If your base models are in binary format, you must decompile them into ASCII format (for example, using a tool like [CleanmodelsEE](https://github.com/plenarius/cleanmodels/tree/v4-go-rewrite) or NWNMdlComp) before running them through this utility.
