@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **`colors` block-consumed with truncation protection:** The `colors` (per-vertex custom colour) block is now consumed via the same counted-block handling as `verts`/`tverts` (`parse_block_count`/`next_block_line`), so a truncated or malformed `colors` block now fails fast with a clear diagnostic instead of silently under-writing. Colour values are never transformed (not geometry) and are written back verbatim.
 - **Truncated `weights`/`constraints` blocks were silently under-written instead of rejected:** both were previously copied line-by-line with no awareness of their declared count, so a source file truncated or corrupted mid-block produced an incomplete output model with no error. Both are now consumed as counted blocks, like `verts`/`tverts`, so a truncated block now fails with the same `<file>:<line>: Block '<name>': unexpected end of file` diagnostic the geometry blocks already give. Neither block is transformed -- skin bone weights and danglymesh rigidity fractions are not scale-dependent distances -- so every line is still copied through verbatim.
 
 ### Added
