@@ -32,6 +32,10 @@
 //   - `animverts`/`animtverts` (EE animmesh position/UV keyframes) reuse
 //     `write_transformed_verts`/`write_transformed_tverts` as-is: same
 //     "N vec3 lines" layout as `verts`/`tverts`, no new transform needed.
+//   - `colors N` blocks (per-vertex custom colour, Vector3 RGB) are
+//     block-consumed via `parse_block_count`/`next_block_line` for
+//     truncation safety, then written back verbatim -- colour is never
+//     scaled/rotated/translated like geometry is.
 //   - `materialname` (an .mtr material filename) gets its own Keep/rename
 //     mode via `--rename-materialname[=NAME]`, mirroring `bitmap`'s
 //     `--rename-bitmap` -- same rationale: renaming is rarely what modders
@@ -574,6 +578,22 @@ fn process_model_inner(
                 }
             }
 
+            "colors" => {
+                let count = parse_block_count(src_path, line_no, "colors", it.next())?;
+
+                writeln!(out, "{}", replace_no_case(&line, src_stem, dest_stem))?;
+
+                // Per-vertex custom colours are colour data, not geometry:
+                // never scaled, rotated, or translated. Still block-consumed
+                // (not left to the generic pass-through) so a truncated
+                // `colors` block fails fast with a clear diagnostic instead
+                // of silently under-writing.
+                for _ in 0..count {
+                    let item_line = next_block_line(&mut lines, &mut line_no, src_path, "colors")?;
+                    writeln!(out, "{item_line}")?;
+                }
+            }
+
             "bitmap" => {
                 let name = it
                     .next()
@@ -790,6 +810,111 @@ mod tests {
             error.contains("broken.mdl:2")
                 && error.contains("Block 'verts'")
                 && error.contains("invalid quantity"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn colors_pass_through_verbatim() {
+        let dir =
+            std::env::temp_dir().join(format!("nwnarmory-colors-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("pm01_belt001.mdl");
+        let out = dir.join("out.tmp");
+
+        fs::write(
+            &src,
+            "newmodel pm01_belt001\n\
+             colors 2\n\
+             0.5000000 0.2500000 0.1250000\n\
+             1.0000000 1.0000000 1.0000000\n\
+             donemodel pm01_belt001\n",
+        )
+        .unwrap();
+
+        // Non-identity scale: proves `colors` is unaffected by the transform
+        // that would otherwise scale a `verts` block.
+        let transform = Transform {
+            match_pat: "pm??_belt???".into(),
+            substitute: "??a*".into(),
+            scale: [2.0, 2.0, 2.0],
+            rotate_deg: [0.0, 0.0, 0.0],
+            translate: [0.0, 0.0, 0.0],
+            min: [-999.0; 3],
+            max: [999.0; 3],
+            tscale: [1.0; 2],
+            trotate_z_deg: 0.0,
+            ttranslate: [0.0; 2],
+            tmin: [-999.0; 2],
+            tmax: [999.0; 2],
+            tbitmap: None,
+            position: PositionMode::LikeVertex,
+        };
+
+        let options = keep_options();
+
+        process_model_inner(
+            &src,
+            "pm01_belt001",
+            "pma1_belt001",
+            &out,
+            &transform,
+            &options,
+        )
+        .unwrap();
+
+        let written = fs::read_to_string(&out).unwrap();
+        assert!(written.contains("colors 2"));
+        assert!(written.contains("0.5000000 0.2500000 0.1250000"));
+        assert!(written.contains("1.0000000 1.0000000 1.0000000"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn truncated_colors_block_is_rejected_with_context() {
+        let dir = std::env::temp_dir().join(format!(
+            "nwnarmory-colors-trunc-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("broken.mdl");
+        let out = dir.join("broken.tmp");
+
+        // Declares 2 color lines but only supplies 1 before EOF.
+        fs::write(&src, "newmodel broken\ncolors 2\n0.1 0.1 0.1\n").unwrap();
+
+        let transform = Transform {
+            match_pat: "broken".into(),
+            substitute: "broken".into(),
+            scale: [1.0; 3],
+            rotate_deg: [0.0; 3],
+            translate: [0.0; 3],
+            min: [-999.0; 3],
+            max: [999.0; 3],
+            tscale: [1.0; 2],
+            trotate_z_deg: 0.0,
+            ttranslate: [0.0; 2],
+            tmin: [-999.0; 2],
+            tmax: [999.0; 2],
+            tbitmap: None,
+            position: PositionMode::LikeVertex,
+        };
+
+        let options = keep_options();
+
+        let error = process_model_inner(&src, "broken", "broken", &out, &transform, &options)
+            .expect_err("truncated colors block must fail")
+            .to_string();
+
+        assert!(
+            error.contains("broken.mdl:4")
+                && error.contains("Block 'colors'")
+                && error.contains("unexpected end of file"),
             "{error}"
         );
 
