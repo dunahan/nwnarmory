@@ -671,13 +671,13 @@ mod tests {
 
     #[test]
     fn empty_substitute_is_rejected_with_section_and_key() {
-        let ini = "[Global]
+        let ini = r#"[Global]
 nTransforms=1
 
 [s0]
 match=source
 substitute=
-";
+"#;
 
         let error = load_transforms_from_path("<test>", ini, false)
             .expect_err("empty substitute must be rejected");
