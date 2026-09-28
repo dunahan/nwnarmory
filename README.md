@@ -58,6 +58,9 @@ nwnarmory NWNArmoryv121.ini pmh0_chest001.mdl ./created
 *   `<source_file_or_folder>`: A single `.mdl` file or a directory containing multiple `.mdl` files.
 *   `<target_folder>`: The directory where the transformed models will be saved.
 *   `--debug` / `-d`: Prints ignored/erroneous INI lines and diagnostics for models that matched no transform rule.
+*   `--dry-run` / `-n`: Lists each planned source-to-output mapping and collision warning without creating the target folder or writing any files.
+*   `--help` / `-h`: Prints CLI usage and option descriptions.
+*   `--version` / `-V`: Prints the installed NWNArmory version.
 *   `--rename-bitmap[=NAME]`: See "Texture & Material Name Renaming" below.
 *   `--rename-materialname[=NAME]`: See "Texture & Material Name Renaming" below.
 
@@ -68,6 +71,16 @@ nwnarmory -v pmh0_chest001.mdl pfa0_chest001.mdl
 ```
 
 See "Deriving Transform Values" below.
+
+### Previewing a Batch (`--dry-run` / `-n`)
+
+Use `--dry-run` before a batch to verify transform-rule matches and generated output names without changing the filesystem:
+
+```bash
+nwnarmory --dry-run standard.ini ./original ./created
+```
+
+The preview performs the same source discovery, wildcard matching, and target-collision checks as a normal run. It reports each `Would process` mapping, but it does not create the target directory, parse or transform model contents, or reserve output files for a later invocation. A preview still returns a non-zero status if its planned outputs collide.
 
 ### Output Collision Policy and Exit Status
 
@@ -111,10 +124,19 @@ Omit either flag if your texture/material names are independent of the model nam
 The tool is at full behavioral parity with the original (pre-Enhanced-Edition) NWNArmory for every field
 it documented -- plus two bugfixes the original never had (see `CHANGELOG.md` 1.3.3). It also reads and
 correctly transforms the NWN:EE ASCII additions: `normals`, `tangents`, extra UV channels
-(`tverts1`/`2`/`3`), `animverts`/`animtverts`, `materialname`, `weights`, and `constraints`. A small set
-of EE fields (per-vertex `colors`, animated keyframe controllers, walkmesh/AABB data) aren't handled yet
--- see [`docs/rust-port-format-coverage.md`](docs/rust-port-format-coverage.md) for the full, current
-breakdown of what's covered, what's open, and what's deliberately out of scope.
+(`tverts1`/`2`/`3`), `animverts`/`animtverts`, `materialname`, `weights`, and `constraints`. Per-vertex
+`colors` blocks are also safely preserved and validated. Animated keyframe controllers and walkmesh/AABB
+data are not handled yet -- see [`docs/rust-port-format-coverage.md`](docs/rust-port-format-coverage.md)
+for the full, current breakdown of what's covered, what's open, and what's deliberately out of scope.
+
+### Per-Vertex Colours (`colors`)
+
+NWN:EE `colors` blocks contain custom RGB values for individual vertices. NWNArmory preserves every valid
+colour entry verbatim: colours are material data rather than geometry, so `scale`, `rotate`, and `translate`
+do not alter them. The tool still validates the block strictly. Its declared count must be present, and each
+entry must contain exactly three finite numeric values. A malformed or truncated `colors` block stops that
+model's transformation with a file, line, and block-name diagnostic; the safe-write policy means no partial
+target model is published.
 
 ## ⚠️ Important Prerequisites
 
