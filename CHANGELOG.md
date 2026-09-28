@@ -4,11 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-09-28
+
 ### Fixed
 - **`colors` blocks are structurally validated:** The `colors` (per-vertex custom colour) block is consumed via the same counted-block handling as `verts`/`tverts` (`parse_block_count`/`next_block_line`), and every entry must be exactly three finite numbers. A truncated or malformed block now fails fast with a clear diagnostic instead of silently under-writing or consuming a following directive. Colour values are never transformed (not geometry) and valid source lines are written back verbatim.
 - **Truncated `weights`/`constraints` blocks were silently under-written instead of rejected:** both were previously copied line-by-line with no awareness of their declared count, so a source file truncated or corrupted mid-block produced an incomplete output model with no error. Both are now consumed as counted blocks, like `verts`/`tverts`, so a truncated block now fails with the same `<file>:<line>: Block '<name>': unexpected end of file` diagnostic the geometry blocks already give. Neither block is transformed -- skin bone weights and danglymesh rigidity fractions are not scale-dependent distances -- so every line is still copied through verbatim.
 
 ### Added
+- **`--dry-run` / `-n` preview mode:** Lists every planned source-to-output mapping and detects name collisions without creating the target directory or writing files. This makes it safe to verify broad wildcard rules before a batch.
+- **`--help` / `-h` and `--version` / `-V` flags:** Expose the command synopsis/options and the installed package version without requiring positional arguments.
 - **`--rename-materialname[=NAME]` flag:** New opt-in control over the `materialname` line (the `.mtr` material file reference), mirroring `--rename-bitmap`. Bare flag substitutes the newly generated model name in; `--rename-materialname=NAME` sets the line to that literal material name instead.
 
 ### Changed

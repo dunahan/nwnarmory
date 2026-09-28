@@ -69,12 +69,15 @@ fn main() {
 }
 
 fn print_usage() {
-    eprintln!("Usage: nwnarmory [--debug|-d] [--rename-bitmap[=NAME]] [--rename-materialname[=NAME]] <transforms.ini> <source_file_or_folder> <target_folder>");
+    eprintln!("Usage: nwnarmory [--debug|-d] [--dry-run|-n] [--rename-bitmap[=NAME]] [--rename-materialname[=NAME]] <transforms.ini> <source_file_or_folder> <target_folder>");
     eprintln!("       nwnarmory [--values|-v] <source.mdl> <target.mdl>");
     eprintln!();
     eprintln!("Applies the scaling/rotation/translation rules defined in <transforms.ini>");
     eprintln!("to ASCII NWN .mdl files (race variants).");
     eprintln!("  --debug, -d;               Shows ignored/erroneous lines when loading the INI.");
+    eprintln!("  --dry-run, -n;             Lists planned outputs and collision warnings without writing files.");
+    eprintln!("  --help, -h;                Shows this help text.");
+    eprintln!("  --version, -V;             Shows the program version.");
     eprintln!("  --values, -v;              Fits scale/rotate/translate between two .mdl files and prints INI-ready output.");
     eprintln!(
         "  --rename-bitmap[=NAME];    Off by default: the bitmap/texture line is left untouched."
@@ -150,6 +153,15 @@ struct ModelOptions<'a> {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
 
+    if raw_args.iter().any(|a| a == "--help" || a == "-h") {
+        print_usage();
+        return Ok(());
+    }
+    if raw_args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("nwnarmory {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     if raw_args.iter().any(|a| a == "--values" || a == "-v") {
         let rest: Vec<&String> = raw_args
             .iter()
@@ -163,6 +175,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let debug = raw_args.iter().any(|a| a == "--debug" || a == "-d");
+    let dry_run = raw_args.iter().any(|a| a == "--dry-run" || a == "-n");
     let bitmap_mode = parse_bitmap_mode(&raw_args);
     let materialname_mode = parse_materialname_mode(&raw_args);
 
@@ -171,6 +184,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|a| {
             a != "--debug"
                 && a != "-d"
+                && a != "--dry-run"
+                && a != "-n"
                 && a != "--rename-bitmap"
                 && !a.starts_with("--rename-bitmap=")
                 && a != "--rename-materialname"
@@ -187,6 +202,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         &args[1],
         PathBuf::from(&args[2]),
         debug,
+        dry_run,
         &bitmap_mode,
         &materialname_mode,
     )
@@ -197,6 +213,7 @@ fn run_transform(
     src_arg: &str,
     dest_dir: PathBuf,
     debug: bool,
+    dry_run: bool,
     bitmap_mode: &BitmapMode,
     materialname_mode: &MaterialnameMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -210,7 +227,9 @@ fn run_transform(
         eprintln!("No .mdl source files found in '{src_arg}'.");
         return Ok(());
     }
-    fs::create_dir_all(&dest_dir)?;
+    if !dry_run {
+        fs::create_dir_all(&dest_dir)?;
+    }
 
     let options = ModelOptions {
         bitmap_mode,
@@ -261,6 +280,15 @@ fn run_transform(
                 skipped_collisions += 1;
                 continue;
             }
+            if dry_run {
+                eprintln!(
+                    "Would process {} -> {}",
+                    src_path.display(),
+                    out_path.display()
+                );
+                processed += 1;
+                continue;
+            }
             eprintln!(
                 "Processing {} -> {}",
                 src_path.display(),
@@ -289,8 +317,13 @@ fn run_transform(
         }
     }
 
+    let action = if dry_run {
+        "would be written"
+    } else {
+        "written"
+    };
     eprintln!(
-        "Done: {processed} file(s) written, {skipped_collisions} skipped due to name collision, {failed} file(s) failed."
+        "Done: {processed} file(s) {action}, {skipped_collisions} skipped due to name collision, {failed} file(s) failed."
     );
     if skipped_collisions > 0 || failed > 0 {
         return Err(format!(
@@ -311,6 +344,7 @@ fn path_exists(path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
 
 fn collect_source_files(src_arg: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     let path = Path::new(src_arg);
+
     if path.is_dir() {
         let mut out = Vec::new();
         for entry in fs::read_dir(path)? {
@@ -327,6 +361,9 @@ fn collect_source_files(src_arg: &str) -> Result<Vec<PathBuf>, Box<dyn std::erro
         out.sort();
         Ok(out)
     } else {
+        fs::File::open(path)
+            .map_err(|e| format!("cannot open source file '{}': {e}", path.display()))?;
+
         Ok(vec![path.to_path_buf()])
     }
 }
