@@ -188,6 +188,44 @@ fn malformed_model_leaves_no_output_or_temporary_file() {
 }
 
 #[test]
+fn dry_run_rejects_a_missing_explicit_source_file() {
+    let temp = TempDir::new("dry-run-missing-source");
+    let ini_path = temp.path().join("rules.ini");
+    let missing_source = temp.path().join("does-not-exist.mdl");
+    let destination = temp.path().join("out");
+
+    write(&ini_path, ini());
+
+    let output = run_with_args(
+        &["--dry-run"],
+        &ini_path,
+        &missing_source,
+        &destination,
+    );
+
+    assert!(
+        !output.status.success(),
+        "dry-run unexpectedly succeeded.\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot open source file"),
+        "Expected missing-source diagnostic. Actual stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&missing_source.display().to_string()),
+        "Expected the source path in the diagnostic. Actual stderr:\n{stderr}"
+    );
+
+    assert!(
+        !destination.join("does-not-exist.mdl").exists(),
+        "dry-run must not create a planned output"
+    );
+}
+
+#[test]
 fn batch_keeps_successful_outputs_but_returns_failure_when_one_model_fails() {
     let temp = TempDir::new("partial-batch");
     let ini_path = temp.path().join("rules.ini");
