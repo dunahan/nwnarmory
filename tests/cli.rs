@@ -316,3 +316,55 @@ fn values_flag_prints_ini_ready_fit_for_corresponding_models() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn dry_run_reports_planned_output_without_creating_destination() {
+    let temp = TempDir::new("dry-run");
+    let ini_path = temp.path().join("rules.ini");
+    let source = temp.path().join("source.mdl");
+    let destination = temp.path().join("out");
+
+    write(&ini_path, transform_ini());
+    write(&source, transformed_model());
+
+    let output = run_with_args(&["--dry-run"], &ini_path, &source, &destination);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !destination.exists(),
+        "dry-run must not create the destination directory"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Would process") && stderr.contains("target.mdl"),
+        "Expected planned output missing. Actual stderr:\n{stderr}"
+    );
+    assert!(stderr.contains("1 file(s) would be written"), "{stderr}");
+}
+
+#[test]
+fn help_and_version_flags_succeed_without_positional_arguments() {
+    let binary = env!("CARGO_BIN_EXE_nwnarmory");
+
+    let help = Command::new(binary)
+        .arg("--help")
+        .output()
+        .expect("run --help");
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stderr).contains("--dry-run, -n"));
+
+    let version = Command::new(binary)
+        .arg("--version")
+        .output()
+        .expect("run --version");
+    assert!(version.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        format!("nwnarmory {}", env!("CARGO_PKG_VERSION"))
+    );
+}
