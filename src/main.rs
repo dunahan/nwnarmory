@@ -77,7 +77,7 @@ fn print_usage() {
     eprintln!("  --debug, -d;               Shows ignored/erroneous lines when loading the INI.");
     eprintln!("  --dry-run, -n;             Lists planned outputs and collision warnings without writing files.");
     eprintln!("  --help, -h;                Shows this help text.");
-    eprintln!("  --version, -V;             Shows the program version.");    
+    eprintln!("  --version, -V;             Shows the program version.");
     eprintln!("  --values, -v;              Fits scale/rotate/translate between two .mdl files and prints INI-ready output.");
     eprintln!(
         "  --rename-bitmap[=NAME];    Off by default: the bitmap/texture line is left untouched."
