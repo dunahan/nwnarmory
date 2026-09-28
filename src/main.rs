@@ -590,6 +590,11 @@ fn process_model_inner(
                 // of silently under-writing.
                 for _ in 0..count {
                     let item_line = next_block_line(&mut lines, &mut line_no, src_path, "colors")?;
+                    // Validate the fixed Vector3 layout before copying it.
+                    // Besides rejecting corrupt model data, this prevents a
+                    // counted block from silently consuming a following MDL
+                    // directive as though it were a colour value.
+                    parse_numbers(src_path, line_no, "colors", &item_line, 3)?;
                     writeln!(out, "{item_line}")?;
                 }
             }
@@ -915,6 +920,40 @@ mod tests {
             error.contains("broken.mdl:4")
                 && error.contains("Block 'colors'")
                 && error.contains("unexpected end of file"),
+            "{error}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn malformed_colors_entry_is_rejected_with_context() {
+        let dir = std::env::temp_dir().join(format!(
+            "nwnarmory-colors-malformed-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("broken.mdl");
+        let out = dir.join("broken.tmp");
+        fs::write(&src, "newmodel broken\ncolors 1\nnot-a-colour\n").unwrap();
+
+        let transform = Transform {
+            match_pat: "broken".into(),
+            substitute: "broken".into(),
+            ..identity_transform()
+        };
+        let options = keep_options();
+
+        let error = process_model_inner(&src, "broken", "broken", &out, &transform, &options)
+            .expect_err("malformed colors entry must fail")
+            .to_string();
+
+        assert!(
+            error.contains("broken.mdl:3")
+                && error.contains("Block 'colors'")
+                && error.contains("invalid number"),
             "{error}"
         );
 
