@@ -67,6 +67,15 @@ fn run_with_args(
         .expect("run nwnarmory")
 }
 
+fn run_values(source: &Path, target: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_nwnarmory"))
+        .arg("--values")
+        .arg(source)
+        .arg(target)
+        .output()
+        .expect("run nwnarmory --values")
+}
+
 #[test]
 fn successful_transform_writes_expected_model_and_preserves_bitmap() {
     let temp = TempDir::new("successful-transform");
@@ -229,4 +238,81 @@ fn rename_bitmap_flag_changes_only_the_bitmap_value() {
     assert!(generated.contains("  bitmap target_diffuse\n"));
     assert!(!generated.contains("  bitmap armor_diffuse\n"));
     assert!(generated.contains("    3.0000000 2.0000000 4.5000000\n"));
+}
+
+#[test]
+fn values_flag_prints_ini_ready_fit_for_corresponding_models() {
+    let temp = TempDir::new("values");
+    let source = temp.path().join("pm01_chest001.mdl");
+    let target = temp.path().join("pma1_chest001.mdl");
+
+    write(
+        &source,
+        "newmodel pm01_chest001\n\
+         node dummy pm01_chest001\n\
+           position 0 0 0\n\
+           verts 4\n\
+             0 0 0\n\
+             1 0 0\n\
+             0 1 0\n\
+             0 0 1\n\
+           tverts 3\n\
+             0 0 0\n\
+             1 0 0\n\
+             0 1 0\n\
+         endnode\n\
+         donemodel pm01_chest001\n",
+    );
+
+    write(
+        &target,
+        "newmodel pma1_chest001\n\
+         node dummy pma1_chest001\n\
+           position 9 8 7\n\
+           verts 4\n\
+             1 -2 0.5\n\
+             3 -2 0.5\n\
+             1 1 0.5\n\
+             1 -2 4.5\n\
+           tverts 3\n\
+             0.1 -0.2 0\n\
+             2.1 -0.2 0\n\
+             0.1 2.8 0\n\
+         endnode\n\
+         donemodel pma1_chest001\n",
+    );
+
+    let output = run_values(&source, &target);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        "nTransforms=#",
+        "[s#]",
+        "match=pm??_chest???",
+        "substitute=??a*",
+        "scale=(2.0000, 3.0000, 4.0000)",
+        "translate=(1.0000, -2.0000, 0.5000)",
+        "tscale=(2.0000, 3.0000)",
+        "ttranslate=(0.1000, -0.2000)",
+        "position=(9.0000, 8.0000, 7.0000)",
+        "; verts fit: n=4 max_residual=0.00000 mean_residual=0.00000",
+        "; tverts fit: n=3 max_residual=0.00000 mean_residual=0.00000",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "Expected output fragment missing: {expected}\nActual stdout:\n{stdout}"
+        );
+    }
+
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

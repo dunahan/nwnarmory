@@ -522,6 +522,12 @@ pub fn load_transforms_from_path(
 
         let substitute = get_str(section, "substitute", "*").to_lowercase();
 
+        if substitute.is_empty() {
+            return Err(ParseError(format!(
+                "{path}: Section [{section_name}], Key 'substitute': must not be empty"
+            )));
+        }
+
         let position_raw = parse_vec3(
             section,
             "position",
@@ -662,6 +668,27 @@ pub fn build_substitute(old_name: &str, subst: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_substitute_is_rejected_with_section_and_key() {
+        let ini = r#"[Global]
+nTransforms=1
+
+[s0]
+match=source
+substitute=
+"#;
+
+        let error = load_transforms_from_path("<test>", ini, false)
+            .expect_err("empty substitute must be rejected");
+
+        assert!(
+            error
+                .0
+                .contains("Section [s0], Key 'substitute': must not be empty"),
+            "unexpected error: {error}"
+        );
+    }
 
     #[test]
     fn wildcard_basic() {

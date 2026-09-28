@@ -42,6 +42,6 @@ Change history
 4) Now accepts a "translate=(x,y,z)" transform which will shift all points by the specified values. This may not get used much but was invaluable for the Drider where the pelvis' origin and pivot point was moved relative to the rest of the standard models.
 
 You do not have to change your old .ini files to accommodate these new parameters because they will default if not filled in:
-1) The minimum and maximimum parameters default to (-999,-999,-999) and (999,999,999) respectively so they will transform all vertices automatically (again, old behaviour does not change).
+1) The minimum and maximum parameters default to (-999,-999,-999) and (999,999,999) respectively so they will transform all vertices automatically (again, old behaviour does not change).
 2) The translate parameter defaults to (0, 0, 0) so it does not move the vertices (old behaviour).
-3) The position parameter defaults to not change the position (old behaviour).
+3) The position parameter defaults to leaving the position unchanged (old behaviour).
