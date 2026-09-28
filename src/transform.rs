@@ -683,7 +683,9 @@ substitute=
             .expect_err("empty substitute must be rejected");
 
         assert!(
-            error.0.contains("Section [s0], Key 'substitute': must not be empty"),
+            error
+                .0
+                .contains("Section [s0], Key 'substitute': must not be empty"),
             "unexpected error: {error}"
         );
     }
