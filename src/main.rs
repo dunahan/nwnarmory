@@ -344,6 +344,7 @@ fn path_exists(path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
 
 fn collect_source_files(src_arg: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     let path = Path::new(src_arg);
+
     if path.is_dir() {
         let mut out = Vec::new();
         for entry in fs::read_dir(path)? {
@@ -360,6 +361,9 @@ fn collect_source_files(src_arg: &str) -> Result<Vec<PathBuf>, Box<dyn std::erro
         out.sort();
         Ok(out)
     } else {
+        fs::File::open(path)
+            .map_err(|e| format!("cannot open source file '{}': {e}", path.display()))?;
+
         Ok(vec![path.to_path_buf()])
     }
 }
