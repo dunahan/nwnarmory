@@ -196,12 +196,7 @@ fn dry_run_rejects_a_missing_explicit_source_file() {
 
     write(&ini_path, ini());
 
-    let output = run_with_args(
-        &["--dry-run"],
-        &ini_path,
-        &missing_source,
-        &destination,
-    );
+    let output = run_with_args(&["--dry-run"], &ini_path, &missing_source, &destination);
 
     assert!(
         !output.status.success(),
