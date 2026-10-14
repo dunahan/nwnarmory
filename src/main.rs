@@ -730,7 +730,11 @@ fn process_model_inner(
                 })?;
 
                 let new_model = replace_no_case(model_name, src_stem, dest_stem);
-                let new_super = build_substitute(super_name, &t.substitute);
+                let new_super = if super_name.eq_ignore_ascii_case("NULL") {
+                    super_name.to_string()
+                } else {
+                    build_substitute(super_name, &t.substitute)
+                };
 
                 writeln!(out, "setsupermodel {new_model} {new_super}")?;
             }
