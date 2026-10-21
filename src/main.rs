@@ -939,6 +939,75 @@ mod tests {
     }
 
     #[test]
+    fn extra_uv_channels_transform_even_when_tbitmap_does_not_match() {
+        let dir =
+            std::env::temp_dir().join(format!("nwnarmory-extra-uv-tbitmap-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("pmh0_test.mdl");
+        let out = dir.join("out.tmp");
+        fs::write(
+            &src,
+            "newmodel pmh0_test\n\
+             beginmodelgeom pmh0_test\n\
+             node trimesh body\n\
+             parent NULL\n\
+             bitmap body_texture\n\
+             tverts 1\n\
+             0.1 0.2 0\n\
+             tverts1 1\n\
+             0.2 0.3 0.25\n\
+             tverts2 1\n\
+             0.4 0.5 0.5\n\
+             tverts3 1\n\
+             0.6 0.7 0.75\n\
+             endnode\n\
+             endmodelgeom pmh0_test\n\
+             donemodel pmh0_test\n",
+        )
+        .unwrap();
+
+        let transform = Transform {
+            match_pat: "pm??_test".into(),
+            substitute: "??a*".into(),
+            tscale: [2.0, 1.0],
+            ttranslate: [0.25, 0.5],
+            tbitmap: Some("another_texture".into()),
+            ..identity_transform()
+        };
+
+        process_model_inner(
+            &src,
+            "pmh0_test",
+            "pma0_test",
+            &out,
+            &transform,
+            &keep_options(),
+        )
+        .unwrap();
+
+        let written = fs::read_to_string(&out).unwrap();
+        for expected in [
+            "tverts 1",
+            "0.1 0.2 0",
+            "tverts1 1",
+            "0.6500000 0.8000000 0.2500000",
+            "tverts2 1",
+            "1.0500000 1.0000000 0.5000000",
+            "tverts3 1",
+            "1.4500000 1.2000000 0.7500000",
+        ] {
+            assert!(
+                written.contains(expected),
+                "missing `{expected}` in:\n{written}"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn replace_no_case_basic() {
         assert_eq!(
             replace_no_case("bitmap PM01_BELT001", "pm01_belt001", "pm01a_belt001"),
