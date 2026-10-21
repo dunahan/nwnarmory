@@ -66,7 +66,8 @@ jobs:
     - name: Read version
       id: extract
       run: |
-        VERSION=$(grep -m 1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+        VERSION="$(grep -m 1 '^version = ' Cargo.toml | sed -E 's/^version = "([^"]+)".*/\1/' | tr -d '\r')"
+         echo "Found version: $VERSION"
         echo "Found version: $VERSION"
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
@@ -84,15 +85,23 @@ jobs:
     - name: Extract changelog for release notes
       if: steps.check_tag.outputs.is_new == 'true'
       run: |
-        VERSION="${{ steps.extract.outputs.version }}"
+        VERSION="$(printf '%s' "${{ steps.extract.outputs.version }}" | tr -d '\r')"
 
-        if ! grep -qE "^## \[$VERSION\]" CHANGELOG.md; then
+        # Normalize CRLF to LF so the changelog heading check works consistently.
+        tr -d '\r' < CHANGELOG.md > CHANGELOG.cleaned.md
+        
+        if ! grep -Fq "## [$VERSION]" CHANGELOG.cleaned.md; then
           echo "::error::CHANGELOG.md has no release section for [$VERSION]"
           exit 1
         fi
 
-        awk "/^## \[$VERSION\]/{flag=1; next} /^## /{flag=0} flag" \
-          CHANGELOG.md > release_notes.txt
+        awk -v version="$VERSION" '
+          /^## \[/ {
+            if ($0 ~ "^## \\[" version "\\]") { flag=1; next }
+            if ($0 ~ /^## /) { flag=0 }
+          }
+          flag
+        ' CHANGELOG.cleaned.md > release_notes.txt
 
         if [ ! -s release_notes.txt ]; then
           echo "::error::Release notes for [$VERSION] are empty"
