@@ -274,6 +274,73 @@ fn rename_bitmap_flag_changes_only_the_bitmap_value() {
 }
 
 #[test]
+fn rename_materialname_flag_preserves_default_and_supports_literal_name() {
+    let temp = TempDir::new("rename-materialname");
+    let ini_path = temp.path().join("rules.ini");
+    let source = temp.path().join("source.mdl");
+    let keep_destination = temp.path().join("keep");
+    let renamed_destination = temp.path().join("renamed");
+
+    write(&ini_path, transform_ini());
+    write(
+        &source,
+        "newmodel source\nnode dummy source\n  materialname source_material\nendnode\ndonemodel source\n",
+    );
+
+    let output = run(&ini_path, &source, &keep_destination);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let generated =
+        fs::read_to_string(keep_destination.join("target.mdl")).expect("read transformed model");
+    assert!(generated.contains("  materialname source_material\n"));
+
+    let output = run_with_args(
+        &["--rename-materialname=custom_material"],
+        &ini_path,
+        &source,
+        &renamed_destination,
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let generated =
+        fs::read_to_string(renamed_destination.join("target.mdl")).expect("read renamed model");
+    assert!(generated.contains("  materialname custom_material\n"));
+    assert!(!generated.contains("  materialname source_material\n"));
+}
+
+#[test]
+fn renaming_model_preserves_file_dependency_references() {
+    let temp = TempDir::new("file-dependency-references");
+    let ini_path = temp.path().join("rules.ini");
+    let source = temp.path().join("source.mdl");
+    let destination = temp.path().join("out");
+    let target = destination.join("target.mdl");
+
+    write(&ini_path, transform_ini());
+    write(
+        &source,
+        "newmodel source\nfiledependancy source_texture.tga\nfiledependency source_material.mtr\nnode dummy source\nendnode\ndonemodel source\n",
+    );
+
+    let output = run(&ini_path, &source, &destination);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let generated = fs::read_to_string(&target).expect("read transformed model");
+    assert!(generated.contains("filedependancy source_texture.tga\n"));
+    assert!(generated.contains("filedependency source_material.mtr\n"));
+    assert!(generated.contains("newmodel target\n"));
+}
+
+#[test]
 fn values_flag_prints_ini_ready_fit_for_corresponding_models() {
     let temp = TempDir::new("values");
     let source = temp.path().join("pm01_chest001.mdl");

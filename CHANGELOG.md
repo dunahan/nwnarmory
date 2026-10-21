@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.5] - 2026-10-21
+
+### Fixed
+- **Empty lines inside counted model blocks no longer shift or invalidate the data:** Empty lines are skipped while reading block entries, so valid vertex data after a blank line is still processed correctly.
+
+### Added
+- **Regression coverage for model transformation streams:** Tests now verify transformed static mesh vertices, all UV channels, normalized normals, and unchanged tangents, colors, faces, and mesh metadata. Additional coverage checks UV-channel behavior when `tbitmap` is configured and confirms absolute root-position overrides leave child positions and geometry correctly transformed.
+- **CLI coverage for material and dependency references:** Tests verify `materialname` stays unchanged by default or accepts an explicit `--rename-materialname` value, and that renaming a model preserves its `filedependancy`/`filedependency` references.
+
 ## [1.3.4] - 2026-09-28
 
 ### Fixed

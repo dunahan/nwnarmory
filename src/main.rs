@@ -481,17 +481,22 @@ fn next_block_line(
     path: &Path,
     block: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    *line_no += 1;
+    loop {
+        *line_no += 1;
 
-    match lines.next() {
-        Some(Ok(line)) => Ok(line),
-        Some(Err(error)) => Err(model_error(
-            path,
-            *line_no,
-            block,
-            &format!("Reading error: {error}"),
-        )),
-        None => Err(model_error(path, *line_no, block, "unexpected end of file")),
+        match lines.next() {
+            Some(Ok(line)) if line.is_empty() => continue,
+            Some(Ok(line)) => return Ok(line),
+            Some(Err(error)) => {
+                return Err(model_error(
+                    path,
+                    *line_no,
+                    block,
+                    &format!("Reading error: {error}"),
+                ));
+            }
+            None => return Err(model_error(path, *line_no, block, "unexpected end of file")),
+        }
     }
 }
 
@@ -822,6 +827,187 @@ mod tests {
     }
 
     #[test]
+    fn static_trimesh_transforms_all_vertex_streams_and_preserves_mesh_data() {
+        let dir = std::env::temp_dir().join(format!(
+            "nwnarmory-static-mesh-streams-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("pmh0_test.mdl");
+        let out = dir.join("out.tmp");
+        fs::write(
+            &src,
+            "newmodel pmh0_test\n\
+             beginmodelgeom pmh0_test\n\
+             node trimesh body\n\
+             parent NULL\n\
+             bitmap body_texture\n\
+             materialname body_material\n\
+             verts 3\n\
+             1 2 3\n\
+             -1 0 1\n\
+             0 1 0\n\
+             tverts 3\n\
+             0.1 0.2 0\n\
+             0.4 0.5 0\n\
+             0.7 0.8 0\n\
+             tverts1 1\n\
+             0.2 0.3 0.25\n\
+             tverts2 1\n\
+             0.4 0.5 0.5\n\
+             tverts3 1\n\
+             0.6 0.7 0.75\n\
+             normals 3\n\
+             1 1 0\n\
+             0 0 1\n\
+             0 1 0\n\
+             tangents 3\n\
+             0 1 0 -1\n\
+             1 0 0 1\n\
+             0 0 1 -1\n\
+             colors 3\n\
+             0.1 0.2 0.3\n\
+             0.4 0.5 0.6\n\
+             0.7 0.8 0.9\n\
+             faces 1\n\
+             0 1 2 0 0 1 2 1\n\
+             endnode\n\
+             endmodelgeom pmh0_test\n\
+             donemodel pmh0_test\n",
+        )
+        .unwrap();
+
+        let transform = Transform {
+            match_pat: "pm??_test".into(),
+            substitute: "??a*".into(),
+            scale: [2.0, 1.0, 1.0],
+            translate: [0.5, 0.0, 0.0],
+            tscale: [2.0, 1.0],
+            ttranslate: [0.25, 0.5],
+            ..identity_transform()
+        };
+
+        process_model_inner(
+            &src,
+            "pmh0_test",
+            "pma0_test",
+            &out,
+            &transform,
+            &keep_options(),
+        )
+        .unwrap();
+
+        let written = fs::read_to_string(&out).unwrap();
+        for expected in [
+            "node trimesh body",
+            "bitmap body_texture",
+            "materialname body_material",
+            "verts 3",
+            "2.5000000 2.0000000 3.0000000",
+            "-1.5000000 0.0000000 1.0000000",
+            "tverts 3",
+            "0.4500000 0.7000000 0.0000000",
+            "1.0500000 1.0000000 0.0000000",
+            "tverts1 1",
+            "0.6500000 0.8000000 0.2500000",
+            "tverts2 1",
+            "1.0500000 1.0000000 0.5000000",
+            "tverts3 1",
+            "1.4500000 1.2000000 0.7500000",
+            "normals 3",
+            "0.4472136 0.8944272 0.0000000",
+            "tangents 3",
+            "0.0000000 1.0000000 0.0000000 -1.0000000",
+            "1.0000000 0.0000000 0.0000000 1.0000000",
+            "colors 3",
+            "0.1 0.2 0.3",
+            "0.4 0.5 0.6",
+            "0.7 0.8 0.9",
+            "faces 1",
+            "0 1 2 0 0 1 2 1",
+            "endnode",
+        ] {
+            assert!(
+                written.contains(expected),
+                "missing `{expected}` in:\n{written}"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extra_uv_channels_transform_even_when_tbitmap_does_not_match() {
+        let dir =
+            std::env::temp_dir().join(format!("nwnarmory-extra-uv-tbitmap-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("pmh0_test.mdl");
+        let out = dir.join("out.tmp");
+        fs::write(
+            &src,
+            "newmodel pmh0_test\n\
+             beginmodelgeom pmh0_test\n\
+             node trimesh body\n\
+             parent NULL\n\
+             bitmap body_texture\n\
+             tverts 1\n\
+             0.1 0.2 0\n\
+             tverts1 1\n\
+             0.2 0.3 0.25\n\
+             tverts2 1\n\
+             0.4 0.5 0.5\n\
+             tverts3 1\n\
+             0.6 0.7 0.75\n\
+             endnode\n\
+             endmodelgeom pmh0_test\n\
+             donemodel pmh0_test\n",
+        )
+        .unwrap();
+
+        let transform = Transform {
+            match_pat: "pm??_test".into(),
+            substitute: "??a*".into(),
+            tscale: [2.0, 1.0],
+            ttranslate: [0.25, 0.5],
+            tbitmap: Some("another_texture".into()),
+            ..identity_transform()
+        };
+
+        process_model_inner(
+            &src,
+            "pmh0_test",
+            "pma0_test",
+            &out,
+            &transform,
+            &keep_options(),
+        )
+        .unwrap();
+
+        let written = fs::read_to_string(&out).unwrap();
+        for expected in [
+            "tverts 1",
+            "0.1 0.2 0",
+            "tverts1 1",
+            "0.6500000 0.8000000 0.2500000",
+            "tverts2 1",
+            "1.0500000 1.0000000 0.5000000",
+            "tverts3 1",
+            "1.4500000 1.2000000 0.7500000",
+        ] {
+            assert!(
+                written.contains(expected),
+                "missing `{expected}` in:\n{written}"
+            );
+        }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn replace_no_case_basic() {
         assert_eq!(
             replace_no_case("bitmap PM01_BELT001", "pm01_belt001", "pm01a_belt001"),
@@ -858,6 +1044,34 @@ mod tests {
                 && error.contains("invalid quantity"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn empty_lines_inside_static_vertex_blocks_are_skipped() {
+        let dir = std::env::temp_dir().join(format!(
+            "nwnarmory-empty-static-row-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let src = dir.join("broken.mdl");
+        let out = dir.join("out.tmp");
+        fs::write(&src, "newmodel broken\nverts 2\n1 2 3\n\n4 5 6\n").unwrap();
+
+        let transform = Transform {
+            match_pat: "broken".into(),
+            substitute: "broken".into(),
+            ..identity_transform()
+        };
+
+        process_model_inner(&src, "broken", "broken", &out, &transform, &keep_options())
+            .expect("a truly empty line does not count as a vertex row");
+
+        let written = fs::read_to_string(&out).unwrap();
+        assert!(written.contains("verts 2\n1 2 3\n4 5 6\n"), "{written}");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1070,6 +1284,8 @@ mod tests {
              node trimesh child_g\n\
              parent rootdummy\n\
              position 0.5 0.5 0.5\n\
+             verts 1\n\
+             1.0 0.0 0.0\n\
              endnode\n\
              endmodelgeom pmh0_test\n\
              donemodel pmh0_test\n",
@@ -1079,7 +1295,9 @@ mod tests {
         let transform = Transform {
             match_pat: "pm??_test".into(),
             substitute: "??a*".into(),
-            scale: [2.0, 2.0, 2.0],
+            scale: [2.0, 1.0, 1.0],
+            rotate_deg: [0.0, 0.0, 90.0],
+            translate: [0.25, -0.5, 1.0],
             position: PositionMode::Absolute([9.0, 9.0, 9.0]),
             ..identity_transform()
         };
@@ -1093,16 +1311,47 @@ mod tests {
             .map(str::trim)
             .filter(|line| line.starts_with("position "))
             .collect();
+        let assert_vec3_close = |actual: &str, expected: [f32; 3]| {
+            let values: Vec<f32> = actual
+                .split_whitespace()
+                .map(|value| value.parse().unwrap())
+                .collect();
+            assert_eq!(values.len(), 3, "expected a vec3, got `{actual}`");
+            for (actual, expected) in values.iter().zip(expected) {
+                assert!(
+                    (*actual - expected).abs() < 1e-5,
+                    "expected {expected}, got {actual} in `{actual}`"
+                );
+            }
+        };
 
         assert_eq!(positions.len(), 2, "expected 2 position lines: {written}");
         assert_eq!(
             positions[0], "position 9.0000000 9.0000000 9.0000000",
             "first position (root pivot) must take the absolute override: {written}"
         );
-        assert_eq!(
-            positions[1], "position 1.0000000 1.0000000 1.0000000",
-            "second position (child bone) must be scaled like a vertex, not overwritten: {written}"
+        assert_vec3_close(
+            positions[1].strip_prefix("position ").unwrap(),
+            [-0.25, 0.5, 1.5],
         );
+        assert!(
+            written.contains("node dummy rootdummy"),
+            "root node was lost: {written}"
+        );
+        assert!(
+            written.contains("node trimesh child_g"),
+            "child mesh node was lost: {written}"
+        );
+        assert!(
+            written.contains("parent rootdummy"),
+            "child parent was lost: {written}"
+        );
+        let vertex = written
+            .lines()
+            .skip_while(|line| line.trim() != "verts 1")
+            .nth(1)
+            .expect("child vertex missing");
+        assert_vec3_close(vertex, [0.25, 1.5, 1.0]);
 
         let _ = fs::remove_dir_all(&dir);
     }
