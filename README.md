@@ -117,6 +117,9 @@ By default, the `bitmap` and `materialname` lines in generated models are left e
 *   `--rename-materialname`: substitutes the newly generated model name into the `materialname` line (the `.mtr` material file reference).
 *   `--rename-materialname=NAME`: sets the `materialname` line to the literal material name `NAME`, regardless of the generated model name.
 
+These flags only change the reference stored in the `.mdl`; they do not rename or create the referenced
+texture or `.mtr` file. Make sure the named asset exists separately when you opt into renaming.
+
 Omit either flag if your texture/material names are independent of the model name (the common case). The two flags are independent of each other — set one, both, or neither.
 
 ## 🧩 Original & EE Model Support
@@ -128,6 +131,11 @@ correctly transforms the NWN:EE ASCII additions: `normals`, `tangents`, extra UV
 `colors` blocks are also safely preserved and validated. Animated keyframe controllers and walkmesh/AABB
 data are not handled yet -- see [`docs/rust-port-format-coverage.md`](docs/rust-port-format-coverage.md)
 for the full, current breakdown of what's covered, what's open, and what's deliberately out of scope.
+
+Counted model blocks read their declared number of entries; truly empty lines between entries are ignored.
+If a block ends before all declared entries are present, processing fails with a file, line, and block
+diagnostic, and the incomplete output is not published. Regression tests cover static mesh vertex and UV
+streams, extra UV channels, normals, and preservation of non-geometric mesh data.
 
 ### Per-Vertex Colours (`colors`)
 
