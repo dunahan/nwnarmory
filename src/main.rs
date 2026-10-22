@@ -683,8 +683,8 @@ fn process_model_inner(
                 // "position" line with the same value, collapsing the entire
                 // skeleton onto the root pivot's coordinate. Only the first
                 // "position" line in the file is the root pivot; every later
-                // one is a child bone's local offset and must be transformed
-                // like a vertex regardless of the configured mode.
+                // one is a child bone's local offset: apply scale/rotation,
+                // but never accumulate the model translation at every joint.
                 let position = if !position_seen {
                     position_seen = true;
                     match t.position {
@@ -694,12 +694,12 @@ fn process_model_inner(
                 } else {
                     if options.debug && matches!(t.position, PositionMode::Absolute(_)) {
                         eprintln!(
-                            "Debug: {}:{}: additional 'position' line after the first one; treating it as a vertex offset, not the absolute pivot override.",
+                            "Debug: {}:{}: additional 'position' line after the first one; treating it as a local bone offset, not the absolute pivot override.",
                             src_path.display(),
                             line_no
                         );
                     }
-                    t.apply_vertex(parsed).unwrap_or(parsed)
+                    t.apply_position_offset(parsed).unwrap_or(parsed)
                 };
 
                 writeln!(
@@ -1270,9 +1270,8 @@ mod tests {
         let out = dir.join("out.tmp");
 
         // Two "position" lines: rootdummy (the pivot -- gets the absolute
-        // override) and a child bone (must be transformed like a vertex
-        // instead, or every bone in the skeleton would collapse onto the
-        // pivot's coordinate).
+        // override) and a child bone (must receive only scale/rotation; a
+        // per-bone translation would accumulate down the hierarchy).
         fs::write(
             &src,
             "newmodel pmh0_test\n\
@@ -1332,7 +1331,7 @@ mod tests {
         );
         assert_vec3_close(
             positions[1].strip_prefix("position ").unwrap(),
-            [-0.25, 0.5, 1.5],
+            [-0.5, 1.0, 0.5],
         );
         assert!(
             written.contains("node dummy rootdummy"),

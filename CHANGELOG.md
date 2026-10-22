@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- **Skeleton-aware `--values` fits and hierarchical position offsets:** `--values source.mdl target.mdl` now derives scale/rotation from same-named nodes with the same parent, while translation remains fitted from corresponding mesh vertices. Child-node `position` offsets now receive scale/rotation without translation, preventing translations from accumulating through articulated hierarchies. Vertex residuals remain visible as a diagnostic, and the fit still expects manual review for approximate or structurally different rigs.
+
 ## [1.3.5] - 2026-10-21
 
 ### Fixed

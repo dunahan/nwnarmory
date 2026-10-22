@@ -17,6 +17,7 @@
 // A*A^T = diag(scale^2), which holds exactly whenever the true map is
 // diagonal-scale-then-rotate (true for every transforms.ini section).
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -29,6 +30,13 @@ struct Geometry {
     verts: Vec<[f64; 3]>,
     tverts: Vec<[f64; 2]>,
     positions: Vec<[f64; 3]>,
+}
+
+#[derive(Clone)]
+struct NodeOffset {
+    name: String,
+    parent: String,
+    position: [f64; 3],
 }
 
 /// Returns the lowercase model stem used by `match` and `substitute`.
@@ -115,7 +123,7 @@ pub fn run_values(source_path: &str, target_path: &str) -> Result<(), Box<dyn st
     println!("substitute={substitute}");
     println!();
 
-    print_vertex_fit(&src, &tgt);
+    print_transform_fit(&src, &tgt, source_path, target_path)?;
     println!();
     print_tvert_fit(&src, &tgt);
     println!();
@@ -124,38 +132,175 @@ pub fn run_values(source_path: &str, target_path: &str) -> Result<(), Box<dyn st
     Ok(())
 }
 
-fn print_vertex_fit(src: &Geometry, tgt: &Geometry) {
-    if src.verts.len() != tgt.verts.len() {
-        eprintln!(
-            "Warning: vertex count mismatch (source={}, target={}); models don't correspond 1:1, skipping scale/rotate/translate.",
-            src.verts.len(),
-            tgt.verts.len()
-        );
-        return;
-    }
-    if src.verts.len() < 3 {
-        eprintln!(
-            "Warning: only {} vertex(es); need at least 3 (non-collinear) to fit a 3-axis transform.",
-            src.verts.len()
-        );
-        return;
-    }
-    match fit_affine3(&src.verts, &tgt.verts) {
-        Some((a, t)) => {
-            let (scale, rotate) = decompose_affine3(a);
-            let (max_res, mean_res) = residual3(&src.verts, &tgt.verts, a, t);
-            println!("scale=({:.4}, {:.4}, {:.4})", scale[0], scale[1], scale[2]);
-            println!("rotate=({:.2}, {:.2}, {:.2})", rotate[0], rotate[1], rotate[2]);
-            println!("translate=({:.4}, {:.4}, {:.4})", t[0], t[1], t[2]);
-            println!(
-                "; verts fit: n={} max_residual={:.5} mean_residual={:.5} (high residual = shear/non-uniform transform this tool can't model, or mismatched files)",
-                src.verts.len(),
-                max_res,
-                mean_res
-            );
+fn print_transform_fit(
+    src: &Geometry,
+    tgt: &Geometry,
+    source_path: &str,
+    target_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source_nodes = read_node_offsets(Path::new(source_path))?;
+    let target_nodes = read_node_offsets(Path::new(target_path))?;
+    let target_by_name: HashMap<&str, &NodeOffset> = target_nodes
+        .iter()
+        .map(|node| (node.name.as_str(), node))
+        .collect();
+    let mut source_offsets = Vec::new();
+    let mut target_offsets = Vec::new();
+    for source in &source_nodes {
+        if let Some(target) = target_by_name.get(source.name.as_str()) {
+            // Local offsets can only be compared when the corresponding nodes
+            // share their parent coordinate frame. The model root names differ
+            // by race, so it is naturally excluded; its absolute pivot is
+            // handled by position= below.
+            if source.parent == target.parent {
+                source_offsets.push(source.position);
+                target_offsets.push(target.position);
+            }
         }
-        None => eprintln!("Warning: vertex data is degenerate (e.g. all collinear), could not solve the 3-axis fit."),
     }
+
+    let skeleton_fit = if source_offsets.len() >= 3 {
+        fit_linear3(&source_offsets, &target_offsets).map(|a| {
+            let (scale, rotate) = decompose_affine3(a);
+            let (max_res, mean_res) = residual3(&source_offsets, &target_offsets, a, [0.0; 3]);
+            (scale, rotate, max_res, mean_res, source_offsets.len())
+        })
+    } else {
+        None
+    };
+
+    let vertex_fit = if src.verts.len() == tgt.verts.len() && src.verts.len() >= 3 {
+        fit_affine3(&src.verts, &tgt.verts).map(|(a, translation)| {
+            let (scale, rotate) = decompose_affine3(a);
+            let (max_res, mean_res) = residual3(&src.verts, &tgt.verts, a, translation);
+            (
+                scale,
+                rotate,
+                translation,
+                max_res,
+                mean_res,
+                src.verts.len(),
+            )
+        })
+    } else {
+        None
+    };
+
+    if let Some((scale, rotate, max_res, mean_res, count)) = skeleton_fit {
+        println!("; scale/rotate fitted from {count} matching local bone offsets (same node name and parent)");
+        println!("scale=({:.4}, {:.4}, {:.4})", scale[0], scale[1], scale[2]);
+        println!(
+            "rotate=({:.2}, {:.2}, {:.2})",
+            rotate[0], rotate[1], rotate[2]
+        );
+        if let Some((_, _, translation, v_max, v_mean, v_count)) = vertex_fit {
+            println!(
+                "translate=({:.4}, {:.4}, {:.4})",
+                translation[0], translation[1], translation[2]
+            );
+            println!("; bone-offset fit: max_residual={max_res:.5} mean_residual={mean_res:.5}");
+            println!("; vertex fit diagnostic: n={v_count} max_residual={v_max:.5} mean_residual={v_mean:.5}");
+        } else {
+            println!("translate=(0.0000, 0.0000, 0.0000)");
+            println!("; bone-offset fit: max_residual={max_res:.5} mean_residual={mean_res:.5}");
+            eprintln!("Warning: vertex blocks could not provide a translation fit; using zero translation.");
+        }
+    } else if let Some((scale, rotate, translation, max_res, mean_res, count)) = vertex_fit {
+        println!("scale=({:.4}, {:.4}, {:.4})", scale[0], scale[1], scale[2]);
+        println!(
+            "rotate=({:.2}, {:.2}, {:.2})",
+            rotate[0], rotate[1], rotate[2]
+        );
+        println!(
+            "translate=({:.4}, {:.4}, {:.4})",
+            translation[0], translation[1], translation[2]
+        );
+        println!("; verts fit: n={count} max_residual={max_res:.5} mean_residual={mean_res:.5}");
+        println!(
+            "; fewer than three compatible bone offsets; scale/rotate/translate use the vertex fit"
+        );
+    } else {
+        eprintln!("Warning: neither compatible bone offsets nor corresponding vertex blocks could provide a transform fit.");
+    }
+    Ok(())
+}
+
+fn read_node_offsets(path: &Path) -> Result<Vec<NodeOffset>, Box<dyn std::error::Error>> {
+    let file = fs::File::open(path)
+        .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
+    let mut nodes = Vec::new();
+    let mut current: Option<NodeOffset> = None;
+    for (index, result) in BufReader::new(file).lines().enumerate() {
+        let line_no = index + 1;
+        let line = result?;
+        let mut parts = line.split_whitespace();
+        match parts.next().unwrap_or("").to_ascii_lowercase().as_str() {
+            "node" => {
+                if let Some(node) = current.take() {
+                    nodes.push(node);
+                }
+                let _node_type = parts.next();
+                if let Some(name) = parts.next() {
+                    current = Some(NodeOffset {
+                        name: name.to_ascii_lowercase(),
+                        parent: String::new(),
+                        position: [0.0; 3],
+                    });
+                }
+            }
+            "parent" => {
+                if let (Some(node), Some(parent)) = (current.as_mut(), parts.next()) {
+                    node.parent = parent.to_ascii_lowercase();
+                }
+            }
+            "position" => {
+                if let Some(node) = current.as_mut() {
+                    let values: Result<Vec<f64>, _> = parts.map(str::parse).collect();
+                    let values = values.map_err(|_| {
+                        format!("{}:{line_no}: invalid node position", path.display())
+                    })?;
+                    if values.len() != 3 || values.iter().any(|value| !value.is_finite()) {
+                        return Err(format!(
+                            "{}:{line_no}: exactly three finite node position values expected",
+                            path.display()
+                        )
+                        .into());
+                    }
+                    node.position = [values[0], values[1], values[2]];
+                }
+            }
+            "endnode" => {
+                if let Some(node) = current.take() {
+                    nodes.push(node);
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(node) = current {
+        nodes.push(node);
+    }
+    Ok(nodes
+        .into_iter()
+        .filter(|node| !node.parent.is_empty())
+        .collect())
+}
+
+fn fit_linear3(src: &[[f64; 3]], tgt: &[[f64; 3]]) -> Option<Mat3> {
+    if src.len() != tgt.len() || src.is_empty() {
+        return None;
+    }
+    let mut m = [[0.0; 3]; 3];
+    let mut nn = [[0.0; 3]; 3];
+    for (source, target) in src.iter().zip(tgt) {
+        for j in 0..3 {
+            for k in 0..3 {
+                m[j][k] += source[j] * source[k];
+                nn[j][k] += source[j] * target[k];
+            }
+        }
+    }
+    Some(mat3_mul(mat3_inverse(m)?, nn))
 }
 
 fn print_tvert_fit(src: &Geometry, tgt: &Geometry) {

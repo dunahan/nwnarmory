@@ -49,8 +49,8 @@ pub struct Transform {
 
 #[derive(Debug, Clone, Copy)]
 pub enum PositionMode {
-    /// No position=(...) specified: position is treated like a normal vertex
-    /// (Scale/Rotate/Translate, if within min/max).
+    /// No position=(...) specified: root position is transformed like a
+    /// vertex (Scale/Rotate/Translate, if within min/max).
     LikeVertex,
     /// position=(x,y,z) specified: absolute displacement (replaces the
     /// original position), see readme.txt.
@@ -109,6 +109,30 @@ impl Transform {
                 p[1] + self.translate[1],
                 p[2] + self.translate[2],
             ];
+        }
+        Some(p)
+    }
+
+    /// Applies only the linear part of the transform to a child node's local
+    /// offset. Translation belongs to the model geometry/root pivot; adding
+    /// it to every local bone offset accumulates it down a hierarchy.
+    pub fn apply_position_offset(&self, v: Vec3) -> Option<Vec3> {
+        if no_scale(self.scale) && no_rot(self.rotate_deg) {
+            return None;
+        }
+        if !self.in_range(v) {
+            return None;
+        }
+        let mut p = v;
+        if !no_scale(self.scale) {
+            p = [
+                p[0] * self.scale[0],
+                p[1] * self.scale[1],
+                p[2] * self.scale[2],
+            ];
+        }
+        if !no_rot(self.rotate_deg) {
+            p = rotate_xyz(p, self.rotate_deg);
         }
         Some(p)
     }

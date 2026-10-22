@@ -12,7 +12,7 @@ Every field the original tool special-cased is special-cased identically in the 
 | `verts` | Scale → Rotate → Translate per vertex, only if in `minimum`/`maximum` range, else copied | Identical (`apply_vertex`) |
 | `tverts` | TScale → TRotate(Z) → TTranslate, gated by `tbitmap` + `tminimum`/`tmaximum` | Identical (`apply_tvert`) |
 | `bitmap` | Always renamed to the new model name | **Diverges on purpose**: default is now *Keep* (see `CHANGELOG` 1.2.4) — the old always-rename behavior is opt-in via `--rename-bitmap` |
-| `position` | First and only documented use case (armor-part pivot); `position=` in the INI applies the *same* absolute override to every `position` line found | **Fixed** (v1.3.3): only the first `position` line (the root pivot) gets the absolute override; every other node is transformed like a vertex instead of collapsing onto the pivot |
+| `position` | `position=` is an absolute root-pivot override; child positions are local offsets | First position gets the absolute override; child offsets get scale/rotation only, without translation accumulating down the hierarchy |
 | `filedependancy`/`filedependency` | Copied verbatim | Identical |
 | Everything else | Generic model-name text substitution | Identical (`replace_no_case`) |
 
