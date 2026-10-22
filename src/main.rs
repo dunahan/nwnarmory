@@ -221,6 +221,7 @@ fn run_transform(
         .map_err(|e| format!("cannot read INI file '{ini_path}': {e}"))?;
     let transforms = load_transforms_from_path(ini_path, &ini_text, debug)?;
     eprintln!("{} transform rules loaded.", transforms.len());
+    eprintln!("Note: transformation runs apply INI values to source models without comparing target topology. Review values produced by the approximate --values fit before applying them.");
 
     let src_files = collect_source_files(src_arg)?;
     if src_files.is_empty() {

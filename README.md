@@ -102,7 +102,7 @@ If you already have a hand-fitted source and target model (e.g. exported from Ma
 nwnarmory --values pmh0_chest001.mdl pfa0_chest001.mdl
 ```
 
-This fits `scale`/`rotate` from matching node offsets (same node name and parent), and `translate` from corresponding `verts`; `tscale`/`trotate`/`ttranslate` come from `tverts`. The absolute `position` is read from the target file. This skeleton-aware fit is useful for articulated parts such as cloaks, where fitting every local mesh vertex alone can miss the rig placement. Only matching nodes in the same parent coordinate frame are used. The output includes fit residuals and a vertex-fit diagnostic; manual adjustment may still be needed when the target rig differs structurally or is not representable by one transform.
+This fits `scale`/`rotate` from matching node offsets (same node name and parent), and `translate` from corresponding `verts`; `tscale`/`trotate`/`ttranslate` come from `tverts`. The absolute `position` is read from the target file. This skeleton-aware fit is useful for articulated parts such as cloaks, where fitting every local mesh vertex alone can miss the rig placement. When vertex correspondence is unavailable, it tries an iterative closest point (ICP) fit on node-matched meshes; if exactly one mesh remains unmatched in each model, those meshes are paired as a fallback. Approximate fits are called out in both the generated output and a warning. Review those values before applying them, since nearest-neighbor correspondences can be ambiguous when topology or shape differs substantially.
 
 Example for a cloak:
 
@@ -114,7 +114,7 @@ The printed lines are ready to paste into a `transforms.ini` `[sN]` section. The
 
 **Important:** Check the generated `match=` and `substitute=` lines before using them. They are inferred from only two filenames and may intentionally match more models than the two input files. Verify especially the fixed prefix, the wildcard positions, the target race/model letter, and the generated target name; adjust the patterns manually when your naming scheme differs from the standard NWNArmory convention.
 
-**Note:** this requires vertex correspondence — both models must have the same vertex count and order, i.e. the target was never remeshed relative to the source. This holds for genuine NWNArmory-style race variants.
+**Note:** exact vertex fitting requires the same vertex count and order. For remeshed models, the tool attempts the approximate mesh ICP fallback and reports the method and residual. Transformation runs do not have a target model available for topology comparison, so review approximate values before using them in a batch.
 
 ## 🖼️ Texture & Material Name Renaming
 

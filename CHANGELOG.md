@@ -4,7 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- **Skeleton-aware `--values` fits and hierarchical position offsets:** `--values source.mdl target.mdl` now derives scale/rotation from same-named nodes with the same parent, while translation remains fitted from corresponding mesh vertices. Child-node `position` offsets now receive scale/rotation without translation, preventing translations from accumulating through articulated hierarchies. Vertex residuals remain visible as a diagnostic, and the fit still expects manual review for approximate or structurally different rigs.
+## [1.3.6] - 2026-10-22
+
+### Added
+- **Topology-tolerant `--values` fitting:** When vertex counts or ordering prevent an index-based fit, the tool now attempts a node-aware iterative closest point (ICP) fit using nearest-neighbor correspondences. Approximate fits include a normal warning, method and residual diagnostics, and a review note in the generated INI output.
+- **Topology guidance during transformation runs:** The CLI now notes that applying INI rules does not compare source and target topology, since the target models are not inputs to a transformation run.
+
+### Changed
+- **Skeleton-aware `--values` fits and hierarchical position offsets:** `--values source.mdl target.mdl` derives scale/rotation from same-named nodes with the same parent, while translation is fitted from corresponding mesh vertices when possible. Child-node `position` offsets receive scale/rotation without translation, preventing translations from accumulating through articulated hierarchies. This supports articulated models such as cloaks; approximate or structurally different fits still require review.
 
 ## [1.3.5] - 2026-10-21
 

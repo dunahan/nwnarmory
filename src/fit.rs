@@ -6,11 +6,8 @@
 // Method: closed-form least squares (normal equations) + analytic 3x3/2x2
 // decomposition. No linalg crate needed for problems this small.
 //
-// ponytail: assumes vertex correspondence by array index (source verts[i] <->
-// target verts[i]), not nearest-neighbor matching. Holds for genuine
-// NWNArmory-style race variants, where the transform never reorders/adds/
-// removes vertices. Upgrade path if that assumption ever breaks: centroid
-// alignment + nearest-neighbor correspondence (ICP) before fitting.
+// Uses index correspondence when topology matches. Otherwise, a node-aware
+// iterative closest point fallback estimates correspondences between meshes.
 //
 // The affine map recovered is v' = v*Scale*R + Translate (row-vector
 // convention, matching apply_vertex in transform.rs). Decomposition exploits
@@ -30,6 +27,13 @@ struct Geometry {
     verts: Vec<[f64; 3]>,
     tverts: Vec<[f64; 2]>,
     positions: Vec<[f64; 3]>,
+    meshes: Vec<MeshGeometry>,
+}
+
+#[derive(Default)]
+struct MeshGeometry {
+    node: String,
+    verts: Vec<[f64; 3]>,
 }
 
 #[derive(Clone)]
@@ -188,22 +192,46 @@ fn print_transform_fit(
 
     if let Some((scale, rotate, max_res, mean_res, count)) = skeleton_fit {
         println!("; scale/rotate fitted from {count} matching local bone offsets (same node name and parent)");
-        println!("scale=({:.4}, {:.4}, {:.4})", scale[0], scale[1], scale[2]);
-        println!(
-            "rotate=({:.2}, {:.2}, {:.2})",
-            rotate[0], rotate[1], rotate[2]
-        );
         if let Some((_, _, translation, v_max, v_mean, v_count)) = vertex_fit {
+            println!("scale=({:.4}, {:.4}, {:.4})", scale[0], scale[1], scale[2]);
+            println!(
+                "rotate=({:.2}, {:.2}, {:.2})",
+                rotate[0], rotate[1], rotate[2]
+            );
             println!(
                 "translate=({:.4}, {:.4}, {:.4})",
                 translation[0], translation[1], translation[2]
             );
             println!("; bone-offset fit: max_residual={max_res:.5} mean_residual={mean_res:.5}");
             println!("; vertex fit diagnostic: n={v_count} max_residual={v_max:.5} mean_residual={v_mean:.5}");
+        } else if let Some((a, translation, used)) = fit_meshes_icp(src, tgt, scale, rotate) {
+            let (mesh_scale, mesh_rotate) = decompose_affine3(a);
+            let (max_r, mean_r) = correspondence_residual(src, tgt, a, translation);
+            println!(
+                "scale=({:.4}, {:.4}, {:.4})",
+                mesh_scale[0], mesh_scale[1], mesh_scale[2]
+            );
+            println!(
+                "rotate=({:.2}, {:.2}, {:.2})",
+                mesh_rotate[0], mesh_rotate[1], mesh_rotate[2]
+            );
+            println!(
+                "translate=({:.4}, {:.4}, {:.4})",
+                translation[0], translation[1], translation[2]
+            );
+            println!("; mesh ICP fit: n={used} max_residual={max_r:.5} mean_residual={mean_r:.5}");
+            println!("; WARNING: topology differs; nearest-neighbor correspondences are approximate. Review these values before use.");
+            eprintln!("Warning: topology differs; scale/rotate/translate use an approximate nearest-neighbor mesh fit. Review the generated values before applying them.");
+            println!("; bone-offset fit diagnostic: max_residual={max_res:.5} mean_residual={mean_res:.5}");
         } else {
+            println!("scale=({:.4}, {:.4}, {:.4})", scale[0], scale[1], scale[2]);
+            println!(
+                "rotate=({:.2}, {:.2}, {:.2})",
+                rotate[0], rotate[1], rotate[2]
+            );
             println!("translate=(0.0000, 0.0000, 0.0000)");
             println!("; bone-offset fit: max_residual={max_res:.5} mean_residual={mean_res:.5}");
-            eprintln!("Warning: vertex blocks could not provide a translation fit; using zero translation.");
+            eprintln!("Warning: vertex blocks could not provide a transform fit; using bone offsets only.");
         }
     } else if let Some((scale, rotate, translation, max_res, mean_res, count)) = vertex_fit {
         println!("scale=({:.4}, {:.4}, {:.4})", scale[0], scale[1], scale[2]);
@@ -219,8 +247,23 @@ fn print_transform_fit(
         println!(
             "; fewer than three compatible bone offsets; scale/rotate/translate use the vertex fit"
         );
+    } else if let Some((a, translation, used)) = fit_meshes_icp(src, tgt, [1.0; 3], [0.0; 3]) {
+        let (scale, rotate) = decompose_affine3(a);
+        let (max_r, mean_r) = correspondence_residual(src, tgt, a, translation);
+        println!("scale=({:.4}, {:.4}, {:.4})", scale[0], scale[1], scale[2]);
+        println!(
+            "rotate=({:.2}, {:.2}, {:.2})",
+            rotate[0], rotate[1], rotate[2]
+        );
+        println!(
+            "translate=({:.4}, {:.4}, {:.4})",
+            translation[0], translation[1], translation[2]
+        );
+        println!("; mesh ICP fit: n={used} max_residual={max_r:.5} mean_residual={mean_r:.5}");
+        println!("; WARNING: topology differs; nearest-neighbor correspondences are approximate. Review these values before use.");
+        eprintln!("Warning: topology differs; scale/rotate/translate use an approximate nearest-neighbor mesh fit. Review the generated values before applying them.");
     } else {
-        eprintln!("Warning: neither compatible bone offsets nor corresponding vertex blocks could provide a transform fit.");
+        eprintln!("Warning: neither compatible bone offsets nor a usable mesh correspondence could provide a transform fit.");
     }
     Ok(())
 }
@@ -366,6 +409,7 @@ fn read_geometry(path: &Path) -> Result<Geometry, Box<dyn std::error::Error>> {
 
     let mut lines = BufReader::new(file).lines();
     let mut geo = Geometry::default();
+    let mut current_node = String::new();
     let mut line_no = 0usize;
 
     while let Some(result) = lines.next() {
@@ -376,6 +420,8 @@ fn read_geometry(path: &Path) -> Result<Geometry, Box<dyn std::error::Error>> {
         let keyword = it.next().unwrap_or("").to_lowercase();
 
         match keyword.as_str() {
+            "node" => current_node = it.nth(1).unwrap_or("").to_ascii_lowercase(),
+            "endnode" => current_node.clear(),
             "verts" | "tverts" => {
                 let block = keyword.as_str();
 
@@ -436,7 +482,20 @@ fn read_geometry(path: &Path) -> Result<Geometry, Box<dyn std::error::Error>> {
                     }
 
                     if block == "verts" {
-                        geo.verts.push([values[0], values[1], values[2]]);
+                        let point = [values[0], values[1], values[2]];
+                        geo.verts.push(point);
+                        let index = geo
+                            .meshes
+                            .iter()
+                            .position(|mesh| mesh.node == current_node)
+                            .unwrap_or_else(|| {
+                                geo.meshes.push(MeshGeometry {
+                                    node: current_node.clone(),
+                                    verts: Vec::new(),
+                                });
+                                geo.meshes.len() - 1
+                            });
+                        geo.meshes[index].verts.push(point);
                     } else {
                         geo.tverts.push([values[0], values[1]]);
                     }
@@ -471,6 +530,193 @@ fn read_geometry(path: &Path) -> Result<Geometry, Box<dyn std::error::Error>> {
     }
 
     Ok(geo)
+}
+
+/// Fits a shared transform using node-matched meshes and ICP correspondences.
+/// Matching node names are preferred; differently named meshes are paired only
+/// when each model has exactly one unmatched non-empty mesh.
+fn fit_meshes_icp(
+    src: &Geometry,
+    tgt: &Geometry,
+    seed_scale: [f64; 3],
+    seed_rotate: [f64; 3],
+) -> Option<(Mat3, [f64; 3], usize)> {
+    let pairs = paired_meshes(src, tgt);
+    if pairs.is_empty() {
+        return None;
+    }
+    let mut source_points = Vec::new();
+    let mut target_points = Vec::new();
+    for (mesh_id, (s, t)) in pairs.into_iter().enumerate() {
+        if s.verts.len() < 4 || t.verts.len() < 4 {
+            continue;
+        }
+        source_points.extend(s.verts.iter().map(|p| (mesh_id, *p)));
+        target_points.extend(t.verts.iter().map(|p| (mesh_id, *p)));
+    }
+    if source_points.len() < 4 || target_points.len() < 4 {
+        return None;
+    }
+    // Bound quadratic nearest-neighbor work for unusually dense meshes.
+    let source_points = sample_tagged_points(&source_points, 1200);
+    let target_points = sample_tagged_points(&target_points, 1200);
+    let mut a = transform_matrix(seed_scale, seed_rotate);
+    let mut translation = [0.0; 3];
+    if seed_scale == [1.0; 3] && seed_rotate == [0.0; 3] {
+        let source_centers: Vec<_> = source_points.iter().map(|(_, point)| *point).collect();
+        let target_centers: Vec<_> = target_points.iter().map(|(_, point)| *point).collect();
+        translation = sub3(centroid3(&target_centers), centroid3(&source_centers));
+    }
+    let mut correspondences = Vec::new();
+    for _ in 0..30 {
+        let mut distances: Vec<(f64, [f64; 3], [f64; 3])> = source_points
+            .iter()
+            .map(|(mesh_id, s)| {
+                let p = add3(apply3_linear(*s, a), translation);
+                let q = target_points
+                    .iter()
+                    .filter(|(target_mesh_id, _)| target_mesh_id == mesh_id)
+                    .map(|(_, point)| point)
+                    .min_by(|x, y| dist3(p, **x).total_cmp(&dist3(p, **y)))
+                    .copied()
+                    .unwrap();
+                (dist3(p, q), *s, q)
+            })
+            .collect();
+        distances.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let keep = ((distances.len() as f64 * 0.8).ceil() as usize).max(4);
+        distances.truncate(keep);
+        let fit_src: Vec<_> = distances.iter().map(|x| x.1).collect();
+        let fit_tgt: Vec<_> = distances.iter().map(|x| x.2).collect();
+        let (next_a, next_t) = fit_affine3(&fit_src, &fit_tgt)?;
+        let delta = distances.iter().map(|x| x.0).sum::<f64>() / distances.len() as f64;
+        correspondences = distances;
+        a = next_a;
+        translation = next_t;
+        if delta < 1e-7 {
+            break;
+        }
+    }
+    if correspondences.len() < 4 {
+        return None;
+    }
+    let (scale, rotate) = decompose_affine3(a);
+    let represented_a = transform_matrix(scale, rotate);
+    let mut represented_t = [0.0; 3];
+    for (_, s, q) in &correspondences {
+        let delta = sub3(*q, apply3_linear(*s, represented_a));
+        represented_t = add3(represented_t, delta);
+    }
+    represented_t = [
+        represented_t[0] / correspondences.len() as f64,
+        represented_t[1] / correspondences.len() as f64,
+        represented_t[2] / correspondences.len() as f64,
+    ];
+    Some((represented_a, represented_t, correspondences.len()))
+}
+
+fn paired_meshes<'a>(
+    src: &'a Geometry,
+    tgt: &'a Geometry,
+) -> Vec<(&'a MeshGeometry, &'a MeshGeometry)> {
+    let mut pairs: Vec<(&MeshGeometry, &MeshGeometry)> = Vec::new();
+    let mut used_target = vec![false; tgt.meshes.len()];
+    for sm in src.meshes.iter().filter(|m| !m.verts.is_empty()) {
+        if let Some((i, tm)) = tgt
+            .meshes
+            .iter()
+            .enumerate()
+            .find(|(i, m)| !used_target[*i] && !m.verts.is_empty() && m.node == sm.node)
+        {
+            used_target[i] = true;
+            pairs.push((sm, tm));
+        }
+    }
+    let unmatched_src: Vec<_> = src
+        .meshes
+        .iter()
+        .filter(|m| !m.verts.is_empty() && !pairs.iter().any(|(s, _)| std::ptr::eq(*s, *m)))
+        .collect();
+    let unmatched_tgt: Vec<_> = tgt
+        .meshes
+        .iter()
+        .enumerate()
+        .filter(|(i, m)| !used_target[*i] && !m.verts.is_empty())
+        .map(|(_, m)| m)
+        .collect();
+    if unmatched_src.len() == 1 && unmatched_tgt.len() == 1 {
+        pairs.push((unmatched_src[0], unmatched_tgt[0]));
+    }
+    pairs
+}
+
+fn sample_tagged_points(points: &[(usize, [f64; 3])], limit: usize) -> Vec<(usize, [f64; 3])> {
+    if points.len() <= limit {
+        return points.to_vec();
+    }
+    let step = points.len() as f64 / limit as f64;
+    (0..limit)
+        .map(|i| points[(i as f64 * step) as usize])
+        .collect()
+}
+
+fn transform_matrix(scale: [f64; 3], rotate: [f64; 3]) -> Mat3 {
+    let basis = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let mut out = [[0.0; 3]; 3];
+    for i in 0..3 {
+        let mut p = [
+            basis[i][0] * scale[0],
+            basis[i][1] * scale[1],
+            basis[i][2] * scale[2],
+        ];
+        for (axis, degrees) in [(-rotate[0], 0), (-rotate[1], 1), (rotate[2], 2)] {
+            let (s, c) = axis.to_radians().sin_cos();
+            p = match degrees {
+                0 => [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c],
+                1 => [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c],
+                _ => [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]],
+            };
+        }
+        out[i] = p;
+    }
+    out
+}
+
+fn correspondence_residual(src: &Geometry, tgt: &Geometry, a: Mat3, t: [f64; 3]) -> (f64, f64) {
+    let pairs = mesh_correspondence_points(src, tgt, a, t);
+    let distances: Vec<_> = pairs
+        .into_iter()
+        .map(|(s, q)| dist3(add3(apply3_linear(s, a), t), q))
+        .collect();
+    if distances.is_empty() {
+        return (0.0, 0.0);
+    }
+    (
+        distances.iter().copied().fold(0.0, f64::max),
+        distances.iter().sum::<f64>() / distances.len() as f64,
+    )
+}
+
+fn mesh_correspondence_points(
+    src: &Geometry,
+    tgt: &Geometry,
+    a: Mat3,
+    t: [f64; 3],
+) -> Vec<([f64; 3], [f64; 3])> {
+    let mut out = Vec::new();
+    for (sm, tm) in paired_meshes(src, tgt) {
+        out.extend(sm.verts.iter().map(|s| {
+            let p = add3(apply3_linear(*s, a), t);
+            (
+                *s,
+                *tm.verts
+                    .iter()
+                    .min_by(|x, y| dist3(p, **x).total_cmp(&dist3(p, **y)))
+                    .unwrap(),
+            )
+        }));
+    }
+    out
 }
 
 // ---------------------------------------------------------------------
