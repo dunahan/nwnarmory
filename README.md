@@ -102,7 +102,15 @@ If you already have a hand-fitted source and target model (e.g. exported from Ma
 nwnarmory --values pmh0_chest001.mdl pfa0_chest001.mdl
 ```
 
-This fits `scale`, `rotate`, `translate` (least-squares over the `verts` block), `tscale`/`trotate`/`ttranslate` (over `tverts`), and `position` (absolute, read directly from the target file) between the two models, and prints the result as INI lines ready to paste into an `[sN]` section. It also derives wildcard-compatible `match=` and `substitute=` lines from the two model names, for example `pm??_chest???` and `??a*`, matching the naming style used by the standard INI. Each fit is followed by a `max_residual`/`mean_residual` line — a high residual means the two files don't relate by a simple scale+rotate+translate (or aren't a matching pair).
+This fits `scale`/`rotate` from matching node offsets (same node name and parent), and `translate` from corresponding `verts`; `tscale`/`trotate`/`ttranslate` come from `tverts`. The absolute `position` is read from the target file. This skeleton-aware fit is useful for articulated parts such as cloaks, where fitting every local mesh vertex alone can miss the rig placement. Only matching nodes in the same parent coordinate frame are used. The output includes fit residuals and a vertex-fit diagnostic; manual adjustment may still be needed when the target rig differs structurally or is not representable by one transform.
+
+Example for a cloak:
+
+```bash
+nwnarmory --values pmh0_cloak_001.mdl pma0_cloak_001.mdl
+```
+
+The printed lines are ready to paste into a `transforms.ini` `[sN]` section. The tool also derives wildcard-compatible `match=` and `substitute=` lines from the model names, for example `pm??_cloak_???` and `??a*`. A high bone-offset or vertex residual indicates that one scale/rotation/translation cannot closely reproduce the target.
 
 **Important:** Check the generated `match=` and `substitute=` lines before using them. They are inferred from only two filenames and may intentionally match more models than the two input files. Verify especially the fixed prefix, the wildcard positions, the target race/model letter, and the generated target name; adjust the patterns manually when your naming scheme differs from the standard NWNArmory convention.
 
@@ -165,7 +173,7 @@ When defining `match=` and `substitute=` strings, you can use wildcards:
 *   `scale=(x, y, z)`: Applies x, y, and z-axis scaling.
 *   `rotate=(x, y, z)`: Applies x, y, and z-axis rotation.
 *   `translate=(x, y, z)`: Applies absolute x, y, and z-axis translation.
-*   `position=(x, y, z)`: Specifies the absolute position of the model's root/pivot node — the first `position` line in the file, which identifies the pivot point for armor parts. It does not affect any other node: every child bone's own `position` (its offset relative to its parent) is always transformed like a vertex (scale/rotate/translate), never overwritten.
+*   `position=(x, y, z)`: Specifies the absolute position of the model's root/pivot node — the first `position` line in the file, which identifies the pivot point for armor parts. It does not affect any other node: each child bone's local `position` offset is transformed by scale and rotation only. Translation is not added to every bone offset, which would otherwise accumulate down the hierarchy.
 *   `minimum=(x, y, z)` & `maximum=(x, y, z)`: If a vertex falls outside these minimum/maximum coordinate bounds, it will not be transformed.
 
 ### Texture Map Parameters
