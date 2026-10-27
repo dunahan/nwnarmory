@@ -1,7 +1,6 @@
-// fit.rs — computes best-fit scale/rotate/translate parameters between a
-// source model and a target model (e.g. pmh0_chest001.mdl -> pfa0_chest001.mdl),
-// so the user can drop the printed values straight into a transforms.ini
-// section and decide themselves what to keep.
+// fit.rs — computes best-fit transforms between source and target models.
+// Skeleton-reference MDLs get a segment report instead of a misleading global
+// transforms.ini fit; their rootdummy marker mesh is not body geometry.
 //
 // Method: closed-form least squares (normal equations) + analytic 3x3/2x2
 // decomposition. No linalg crate needed for problems this small.
@@ -38,9 +37,19 @@ struct MeshGeometry {
 
 #[derive(Clone)]
 struct NodeOffset {
+    kind: String,
     name: String,
     parent: String,
     position: [f64; 3],
+    has_position: bool,
+}
+
+#[derive(Default)]
+struct Skeleton {
+    model_name: String,
+    supermodel: Option<String>,
+    animation_scale: Option<f64>,
+    nodes: Vec<NodeOffset>,
 }
 
 /// Returns the lowercase model stem used by `match` and `substitute`.
@@ -112,6 +121,16 @@ fn model_patterns(source: &str, target: &str) -> (String, String) {
 pub fn run_values(source_path: &str, target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let src = read_geometry(Path::new(source_path))?;
     let tgt = read_geometry(Path::new(target_path))?;
+    let src_skeleton = read_skeleton(Path::new(source_path))?;
+    let tgt_skeleton = read_skeleton(Path::new(target_path))?;
+
+    // A body skeleton has useful per-bone measurements, but no geometry from
+    // which to infer a single transforms.ini scale/rotate/translate.
+    if is_skeleton_reference(&src) && is_skeleton_reference(&tgt) {
+        print_skeleton_report(&src_skeleton, &tgt_skeleton);
+        return Ok(());
+    }
+
     let source_stem = model_stem(source_path)?;
     let target_stem = model_stem(target_path)?;
 
@@ -127,7 +146,7 @@ pub fn run_values(source_path: &str, target_path: &str) -> Result<(), Box<dyn st
     println!("substitute={substitute}");
     println!();
 
-    print_transform_fit(&src, &tgt, source_path, target_path)?;
+    print_transform_fit(&src, &tgt, &src_skeleton, &tgt_skeleton)?;
     println!();
     print_tvert_fit(&src, &tgt);
     println!();
@@ -136,30 +155,27 @@ pub fn run_values(source_path: &str, target_path: &str) -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// Baseline rig MDLs can contain a tiny `rootdummy` marker mesh. It is not
+/// body-part geometry and cannot support a useful global mesh fit.
+fn is_skeleton_reference(geometry: &Geometry) -> bool {
+    geometry.meshes.iter().all(|mesh| mesh.node == "rootdummy")
+}
+
 fn print_transform_fit(
     src: &Geometry,
     tgt: &Geometry,
-    source_path: &str,
-    target_path: &str,
+    src_skeleton: &Skeleton,
+    tgt_skeleton: &Skeleton,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let source_nodes = read_node_offsets(Path::new(source_path))?;
-    let target_nodes = read_node_offsets(Path::new(target_path))?;
-    let target_by_name: HashMap<&str, &NodeOffset> = target_nodes
-        .iter()
-        .map(|node| (node.name.as_str(), node))
-        .collect();
     let mut source_offsets = Vec::new();
     let mut target_offsets = Vec::new();
-    for source in &source_nodes {
-        if let Some(target) = target_by_name.get(source.name.as_str()) {
-            // Local offsets can only be compared when the corresponding nodes
-            // share their parent coordinate frame. The model root names differ
-            // by race, so it is naturally excluded; its absolute pivot is
-            // handled by position= below.
-            if source.parent == target.parent {
-                source_offsets.push(source.position);
-                target_offsets.push(target.position);
-            }
+    let (matched, _, _, _) = matched_nodes(src_skeleton, tgt_skeleton);
+    for (source, target) in matched {
+        // A local offset is comparable only when both models explicitly give
+        // it. An omitted position is not evidence for a zero-length bone.
+        if source.has_position && target.has_position {
+            source_offsets.push(source.position);
+            target_offsets.push(target.position);
         }
     }
 
@@ -268,26 +284,54 @@ fn print_transform_fit(
     Ok(())
 }
 
-fn read_node_offsets(path: &Path) -> Result<Vec<NodeOffset>, Box<dyn std::error::Error>> {
+fn read_skeleton(path: &Path) -> Result<Skeleton, Box<dyn std::error::Error>> {
     let file = fs::File::open(path)
         .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
-    let mut nodes = Vec::new();
+    let mut skeleton = Skeleton::default();
     let mut current: Option<NodeOffset> = None;
     for (index, result) in BufReader::new(file).lines().enumerate() {
         let line_no = index + 1;
         let line = result?;
         let mut parts = line.split_whitespace();
         match parts.next().unwrap_or("").to_ascii_lowercase().as_str() {
+            "newmodel" => {
+                if let Some(name) = parts.next() {
+                    skeleton.model_name = name.to_ascii_lowercase();
+                }
+            }
+            "setsupermodel" => {
+                let _model = parts.next();
+                skeleton.supermodel = parts.next().map(str::to_ascii_lowercase);
+            }
+            "setanimationscale" => {
+                if let Some(raw) = parts.next() {
+                    let scale = raw.parse::<f64>().map_err(|_| {
+                        format!(
+                            "{}:{line_no}: invalid setanimationscale '{raw}'",
+                            path.display()
+                        )
+                    })?;
+                    if !scale.is_finite() {
+                        return Err(format!(
+                            "{}:{line_no}: setanimationscale must be finite",
+                            path.display()
+                        )
+                        .into());
+                    }
+                    skeleton.animation_scale = Some(scale);
+                }
+            }
             "node" => {
                 if let Some(node) = current.take() {
-                    nodes.push(node);
+                    skeleton.nodes.push(node);
                 }
-                let _node_type = parts.next();
-                if let Some(name) = parts.next() {
+                if let (Some(kind), Some(name)) = (parts.next(), parts.next()) {
                     current = Some(NodeOffset {
+                        kind: kind.to_ascii_lowercase(),
                         name: name.to_ascii_lowercase(),
                         parent: String::new(),
                         position: [0.0; 3],
+                        has_position: false,
                     });
                 }
             }
@@ -310,23 +354,158 @@ fn read_node_offsets(path: &Path) -> Result<Vec<NodeOffset>, Box<dyn std::error:
                         .into());
                     }
                     node.position = [values[0], values[1], values[2]];
+                    node.has_position = true;
                 }
             }
             "endnode" => {
                 if let Some(node) = current.take() {
-                    nodes.push(node);
+                    skeleton.nodes.push(node);
                 }
             }
             _ => {}
         }
     }
     if let Some(node) = current {
-        nodes.push(node);
+        skeleton.nodes.push(node);
     }
-    Ok(nodes
-        .into_iter()
-        .filter(|node| !node.parent.is_empty())
-        .collect())
+    for node in &mut skeleton.nodes {
+        // The first child below each model root has a different parent name
+        // in race variants, though it occupies the same model-root frame.
+        if node.parent == skeleton.model_name {
+            node.parent = "<model-root>".to_string();
+        }
+    }
+    Ok(skeleton)
+}
+
+fn node_key(node: &NodeOffset) -> (String, String) {
+    (node.name.clone(), node.parent.clone())
+}
+
+/// Collapse repeated skeleton node records. Several base models repeat the
+/// same dummy tree for different sections; only the first copy carries its
+/// position. If multiple copies provide conflicting positions, leave that
+/// key unmatched rather than selecting an arbitrary transform.
+fn unique_nodes(skeleton: &Skeleton) -> (HashMap<(String, String), &NodeOffset>, usize) {
+    let mut groups: HashMap<(String, String), Vec<&NodeOffset>> = HashMap::new();
+    for node in &skeleton.nodes {
+        if node.parent.is_empty() {
+            continue;
+        }
+        groups.entry(node_key(node)).or_default().push(node);
+    }
+
+    let mut unique = HashMap::new();
+    let mut ambiguous = 0;
+    for (key, group) in groups {
+        let positioned: Vec<_> = group
+            .iter()
+            .copied()
+            .filter(|node| node.has_position)
+            .collect();
+        let selected = match positioned.as_slice() {
+            [one] => Some(*one),
+            [] => group.first().copied(),
+            many if many.iter().all(|node| node.position == many[0].position) => Some(many[0]),
+            _ => None,
+        };
+        if let Some(node) = selected {
+            unique.insert(key, node);
+        } else {
+            ambiguous += 1;
+        }
+    }
+    (unique, ambiguous)
+}
+
+fn matched_nodes<'a>(
+    source: &'a Skeleton,
+    target: &'a Skeleton,
+) -> (Vec<(&'a NodeOffset, &'a NodeOffset)>, usize, usize, usize) {
+    let (source_nodes, source_ambiguous) = unique_nodes(source);
+    let (target_nodes, target_ambiguous) = unique_nodes(target);
+    let mut matched = Vec::new();
+    let mut source_only = 0;
+    for (key, source_node) in &source_nodes {
+        if let Some(target_node) = target_nodes.get(key) {
+            matched.push((*source_node, *target_node));
+        } else {
+            source_only += 1;
+        }
+    }
+    matched.sort_by(|(a, _), (b, _)| (&a.parent, &a.name).cmp(&(&b.parent, &b.name)));
+    let target_only = target_nodes
+        .keys()
+        .filter(|key| !source_nodes.contains_key(*key))
+        .count();
+    (
+        matched,
+        source_only,
+        target_only,
+        source_ambiguous + target_ambiguous,
+    )
+}
+
+fn length(v: [f64; 3]) -> f64 {
+    (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+}
+
+fn print_skeleton_report(source: &Skeleton, target: &Skeleton) {
+    let (matched, source_only, target_only, ambiguous) = matched_nodes(source, target);
+    println!(
+        "; Skeleton comparison: {} -> {}",
+        source.model_name, target.model_name
+    );
+    println!("; These measurements are rig hints, not a transforms.ini fit.");
+    println!(
+        "; Source: supermodel={}, animation scale={}",
+        source.supermodel.as_deref().unwrap_or("unknown"),
+        source
+            .animation_scale
+            .map_or_else(|| "unknown".to_string(), |v| format!("{v:.4}"))
+    );
+    println!(
+        "; Target: supermodel={}, animation scale={}",
+        target.supermodel.as_deref().unwrap_or("unknown"),
+        target
+            .animation_scale
+            .map_or_else(|| "unknown".to_string(), |v| format!("{v:.4}"))
+    );
+    println!(
+        "; Matched nodes: {}; source-only: {source_only}; target-only: {target_only}; ambiguous duplicate keys: {ambiguous}",
+        matched.len()
+    );
+    println!("; Length ratio = target local offset length / source local offset length.");
+    println!("; These ratios do not estimate robe width/depth; add or verify geometry scale from body-part proportions.");
+    println!("; node | type | parent | source offset | target offset | source length | target length | length ratio");
+    for (source_node, target_node) in matched {
+        if !source_node.has_position && !target_node.has_position {
+            continue;
+        }
+        let source_length = length(source_node.position);
+        let target_length = length(target_node.position);
+        let ratio = if source_node.has_position && target_node.has_position && source_length > 1e-9
+        {
+            format!("{:.4}", target_length / source_length)
+        } else {
+            "n/a".to_string()
+        };
+        println!(
+            "; {} | {} | {} | ({:.6}, {:.6}, {:.6}) | ({:.6}, {:.6}, {:.6}) | {:.6} | {:.6} | {}",
+            source_node.name,
+            source_node.kind,
+            source_node.parent,
+            source_node.position[0],
+            source_node.position[1],
+            source_node.position[2],
+            target_node.position[0],
+            target_node.position[1],
+            target_node.position[2],
+            source_length,
+            target_length,
+            ratio
+        );
+    }
 }
 
 fn fit_linear3(src: &[[f64; 3]], tgt: &[[f64; 3]]) -> Option<Mat3> {
