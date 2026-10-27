@@ -70,7 +70,7 @@ fn main() {
 
 fn print_usage() {
     eprintln!("Usage: nwnarmory [--debug|-d] [--dry-run|-n] [--rename-bitmap[=NAME]] [--rename-materialname[=NAME]] <transforms.ini> <source_file_or_folder> <target_folder>");
-    eprintln!("       nwnarmory [--values|-v] <source.mdl> <target.mdl>");
+    eprintln!("       nwnarmory [--values|-v] [--node-map <file.ini>] [--rig-reference <source-rig.mdl> <target-rig.mdl>] <source.mdl> <target.mdl>");
     eprintln!();
     eprintln!("Applies the scaling/rotation/translation rules defined in <transforms.ini>");
     eprintln!("to ASCII NWN .mdl files (race variants).");
@@ -79,6 +79,8 @@ fn print_usage() {
     eprintln!("  --help, -h;                Shows this help text.");
     eprintln!("  --version, -V;             Shows the program version.");
     eprintln!("  --values, -v;              Fits scale/rotate/translate between two .mdl files and prints INI-ready output.");
+    eprintln!("  --node-map <file.ini>;     Emits a per-node adjustment when --values finds one mapped pair.");
+    eprintln!("  --rig-reference <A> <B>;   Adds a skeleton comparison for the source/target rigs to --values output.");
     eprintln!(
         "  --rename-bitmap[=NAME];    Off by default: the bitmap/texture line is left untouched."
     );
@@ -163,15 +165,50 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if raw_args.iter().any(|a| a == "--values" || a == "-v") {
-        let rest: Vec<&String> = raw_args
-            .iter()
-            .filter(|a| *a != "--values" && *a != "-v")
-            .collect();
+        let mut rest = Vec::new();
+        let mut rig_reference = None;
+        let mut node_map = None;
+        let mut index = 0;
+        while index < raw_args.len() {
+            match raw_args[index].as_str() {
+                "--values" | "-v" => index += 1,
+                "--rig-reference" => {
+                    if rig_reference.is_some() {
+                        return Err("--rig-reference may only be specified once".into());
+                    }
+                    let source = raw_args
+                        .get(index + 1)
+                        .filter(|arg| !arg.starts_with('-'))
+                        .ok_or("--rig-reference requires source and target rig files")?;
+                    let target = raw_args
+                        .get(index + 2)
+                        .filter(|arg| !arg.starts_with('-'))
+                        .ok_or("--rig-reference requires source and target rig files")?;
+                    rig_reference = Some((source.as_str(), target.as_str()));
+                    index += 3;
+                }
+                "--node-map" => {
+                    if node_map.is_some() {
+                        return Err("--node-map may only be specified once".into());
+                    }
+                    let path = raw_args
+                        .get(index + 1)
+                        .filter(|arg| !arg.starts_with('-'))
+                        .ok_or("--node-map requires an INI file")?;
+                    node_map = Some(path.as_str());
+                    index += 2;
+                }
+                _ => {
+                    rest.push(raw_args[index].as_str());
+                    index += 1;
+                }
+            }
+        }
         if rest.len() != 2 {
-            eprintln!("Usage: nwnarmory --values|-v <source.mdl> <target.mdl>");
+            eprintln!("Usage: nwnarmory --values|-v [--node-map <file.ini>] [--rig-reference <source-rig.mdl> <target-rig.mdl>] <source.mdl> <target.mdl>");
             std::process::exit(2);
         }
-        return fit::run_values(rest[0], rest[1]);
+        return fit::run_values(rest[0], rest[1], rig_reference, node_map);
     }
 
     let debug = raw_args.iter().any(|a| a == "--debug" || a == "-d");
@@ -523,11 +560,11 @@ fn process_model_inner(
         })?;
 
     let mut last_bitmap = String::new();
-    // Only the file's first "position" line (the model's root/pivot node, see
-    // README: "identifies the pivot point") may take an absolute override from
-    // the INI. Every other node's "position" is a local offset relative to its
-    // own parent, not a global coordinate.
+    // Only the first position is the model pivot; node-position separately
+    // overrides the local transform of the one explicitly mapped node.
     let mut position_seen = false;
+    let mut mapped_node_active = false;
+    let mut mapped_node_orientation_seen = false;
     let mut lines = reader.lines();
     let mut line_no = 0usize;
 
@@ -540,6 +577,37 @@ fn process_model_inner(
         let keyword = it.next().unwrap_or("").to_lowercase();
 
         match keyword.as_str() {
+            "node" => {
+                let _kind = it.next().unwrap_or("");
+                let node_name = it.next().unwrap_or("");
+                let mapped_name = t.mapped_node_name(node_name);
+                mapped_node_active = mapped_name.is_some();
+                mapped_node_orientation_seen = false;
+                let mut out_line = replace_no_case(&line, src_stem, dest_stem);
+                if let Some(mapped_name) = mapped_name {
+                    out_line = replace_no_case(&out_line, node_name, &mapped_name);
+                    if options.debug {
+                        eprintln!(
+                            "Debug: {}:{}: mapped node '{}' to '{}'",
+                            src_path.display(),
+                            line_no,
+                            node_name,
+                            mapped_name
+                        );
+                    }
+                }
+                writeln!(out, "{out_line}")?;
+            }
+
+            "parent" => {
+                let parent_name = it.next().unwrap_or("");
+                let mut out_line = replace_no_case(&line, src_stem, dest_stem);
+                if let Some(mapped_name) = t.mapped_node_name(parent_name) {
+                    out_line = replace_no_case(&out_line, parent_name, &mapped_name);
+                }
+                writeln!(out, "{out_line}")?;
+            }
+
             "verts" | "animverts" | "normals" | "tangents" | "tverts" | "animtverts"
             | "tverts1" | "tverts2" | "tverts3" => {
                 let block = keyword.as_str();
@@ -679,6 +747,8 @@ fn process_model_inner(
                 let values = parse_numbers(src_path, line_no, "position", &raw_values, 3)?;
 
                 let parsed = [values[0], values[1], values[2]];
+                let is_first_position = !position_seen;
+                position_seen = true;
 
                 // Bugfix: PositionMode::Absolute used to overwrite EVERY node's
                 // "position" line with the same value, collapsing the entire
@@ -686,14 +756,18 @@ fn process_model_inner(
                 // "position" line in the file is the root pivot; every later
                 // one is a child bone's local offset: apply scale/rotation,
                 // but never accumulate the model translation at every joint.
-                let position = if !position_seen {
-                    position_seen = true;
+                let position = if mapped_node_active {
+                    t.node_position.unwrap()
+                } else if is_first_position {
                     match t.position {
                         PositionMode::Absolute(position) => position,
                         PositionMode::LikeVertex => t.apply_vertex(parsed).unwrap_or(parsed),
                     }
                 } else {
-                    if options.debug && matches!(t.position, PositionMode::Absolute(_)) {
+                    if !mapped_node_active
+                        && options.debug
+                        && matches!(t.position, PositionMode::Absolute(_))
+                    {
                         eprintln!(
                             "Debug: {}:{}: additional 'position' line after the first one; treating it as a local bone offset, not the absolute pivot override.",
                             src_path.display(),
@@ -708,6 +782,30 @@ fn process_model_inner(
                     "  position {:.7} {:.7} {:.7}",
                     position[0], position[1], position[2]
                 )?;
+            }
+
+            "orientation" if mapped_node_active && t.node_orientation.is_some() => {
+                let orientation = t.node_orientation.unwrap();
+                mapped_node_orientation_seen = true;
+                writeln!(
+                    out,
+                    "  orientation {:.7} {:.7} {:.7} {:.7}",
+                    orientation[0], orientation[1], orientation[2], orientation[3]
+                )?;
+            }
+
+            "endnode" => {
+                if mapped_node_active && !mapped_node_orientation_seen {
+                    if let Some(orientation) = t.node_orientation {
+                        writeln!(
+                            out,
+                            "  orientation {:.7} {:.7} {:.7} {:.7}",
+                            orientation[0], orientation[1], orientation[2], orientation[3]
+                        )?;
+                    }
+                }
+                writeln!(out, "{line}")?;
+                mapped_node_active = false;
             }
 
             "filedependancy" | "filedependency" => {
@@ -814,6 +912,10 @@ mod tests {
             tmax: [999.0, 999.0],
             tbitmap: None,
             position: PositionMode::LikeVertex,
+            node_match: None,
+            node_substitute: None,
+            node_position: None,
+            node_orientation: None,
         }
     }
 
@@ -1112,6 +1214,10 @@ mod tests {
             tmax: [999.0; 2],
             tbitmap: None,
             position: PositionMode::LikeVertex,
+            node_match: None,
+            node_substitute: None,
+            node_position: None,
+            node_orientation: None,
         };
 
         let options = keep_options();
@@ -1164,6 +1270,10 @@ mod tests {
             tmax: [999.0; 2],
             tbitmap: None,
             position: PositionMode::LikeVertex,
+            node_match: None,
+            node_substitute: None,
+            node_position: None,
+            node_orientation: None,
         };
 
         let options = keep_options();

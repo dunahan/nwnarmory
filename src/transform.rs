@@ -45,6 +45,10 @@ pub struct Transform {
     pub tbitmap: Option<String>, // Some(name) = tvert transform only for this bitmap
 
     pub position: PositionMode,
+    pub node_match: Option<String>,
+    pub node_substitute: Option<String>,
+    pub node_position: Option<Vec3>,
+    pub node_orientation: Option<[f32; 4]>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -135,6 +139,17 @@ impl Transform {
             p = rotate_xyz(p, self.rotate_deg);
         }
         Some(p)
+    }
+
+    pub fn mapped_node_name(&self, name: &str) -> Option<String> {
+        let pattern = self.node_match.as_deref()?;
+        if !wildcard_match(pattern, &name.to_lowercase()) {
+            return None;
+        }
+        Some(build_substitute(
+            &name.to_lowercase(),
+            self.node_substitute.as_deref()?,
+        ))
     }
 
     /// Applies the inverse-transpose of the linear part (Scale, Rotate) to a
@@ -483,6 +498,10 @@ pub fn load_transforms_from_path(
         "tmaximum",
         "tbitmap",
         "position",
+        "node-match",
+        "node-substitute",
+        "node-position",
+        "node-orientation",
     ];
 
     let sections = parse_ini_with_path(path, ini_text, debug)?;
@@ -566,6 +585,41 @@ pub fn load_transforms_from_path(
             PositionMode::LikeVertex
         };
 
+        let node_match = section
+            .get("node-match")
+            .map(|value| value.to_ascii_lowercase());
+        let node_substitute = section
+            .get("node-substitute")
+            .map(|value| value.to_ascii_lowercase());
+        let node_position = section
+            .get("node-position")
+            .map(|_| parse_vec3(section, "node-position", "", path, &section_name))
+            .transpose()?;
+        let node_orientation = section
+            .get("node-orientation")
+            .map(|_| {
+                let values = parse_tuple(
+                    get_str(section, "node-orientation", ""),
+                    path,
+                    &section_name,
+                    "node-orientation",
+                    4,
+                )?;
+                Ok::<[f32; 4], ParseError>([values[0], values[1], values[2], values[3]])
+            })
+            .transpose()?;
+        let has_node_map = node_match.is_some()
+            || node_substitute.is_some()
+            || node_position.is_some()
+            || node_orientation.is_some();
+        if has_node_map
+            && (node_match.is_none() || node_substitute.is_none() || node_position.is_none())
+        {
+            return Err(ParseError(format!(
+                "{path}: Section [{section_name}]: node-match, node-substitute, and node-position must be specified together; node-orientation is optional"
+            )));
+        }
+
         let tbitmap = section
             .get("tbitmap")
             .filter(|value| !value.is_empty())
@@ -622,6 +676,10 @@ pub fn load_transforms_from_path(
             )?,
             tbitmap,
             position,
+            node_match,
+            node_substitute,
+            node_position,
+            node_orientation,
         });
     }
 
@@ -746,6 +804,10 @@ substitute=
             tmax: [999.0, 999.0],
             tbitmap: None,
             position: PositionMode::LikeVertex,
+            node_match: None,
+            node_substitute: None,
+            node_position: None,
+            node_orientation: None,
         }
     }
 

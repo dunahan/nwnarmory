@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Skeleton-reference comparison in `--values`:** Skeleton-only inputs now report matched node offsets, segment-length ratios, supermodels, and animation scales instead of suggesting a global mesh transform. The report handles repeated dummy-tree records and permits the small `rootdummy` marker mesh found in some reference MDLs.
+- **Optional `--rig-reference` for `--values`:** A normal model fit can now include a comparison between source and target skeletons. The report is informational and leaves the generated transform values unchanged.
+- **Per-node skin adjustment from `--values`:** `--node-map` can emit node name, position, and orientation settings for a unique source/target node pair. Add `node-match`, `node-substitute`, and `node-position` together to rename the node and set its target position. `node-orientation` is optional: when omitted the source orientation is preserved; when supplied it replaces an existing source value or adds a missing orientation line.
 
 ## [1.3.6] - 2026-10-22
 

@@ -18,6 +18,8 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+use crate::transform::{build_substitute, wildcard_match};
+
 type Mat3 = [[f64; 3]; 3];
 type Mat2 = [[f64; 2]; 2];
 
@@ -42,6 +44,13 @@ struct NodeOffset {
     parent: String,
     position: [f64; 3],
     has_position: bool,
+    orientation: [f64; 4],
+    has_orientation: bool,
+}
+
+struct NodeMap {
+    pattern: String,
+    substitute: String,
 }
 
 #[derive(Default)]
@@ -118,16 +127,25 @@ fn model_patterns(source: &str, target: &str) -> (String, String) {
 }
 
 /// Entry point for `nwnarmory --values <source.mdl> <target.mdl>`.
-pub fn run_values(source_path: &str, target_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_values(
+    source_path: &str,
+    target_path: &str,
+    rig_reference: Option<(&str, &str)>,
+    node_map_path: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let src = read_geometry(Path::new(source_path))?;
     let tgt = read_geometry(Path::new(target_path))?;
     let src_skeleton = read_skeleton(Path::new(source_path))?;
     let tgt_skeleton = read_skeleton(Path::new(target_path))?;
+    let node_map = node_map_path.map(read_node_map).transpose()?;
 
     // A body skeleton has useful per-bone measurements, but no geometry from
     // which to infer a single transforms.ini scale/rotate/translate.
     if is_skeleton_reference(&src) && is_skeleton_reference(&tgt) {
         print_skeleton_report(&src_skeleton, &tgt_skeleton);
+        if let Some(node_map) = &node_map {
+            print_node_map_report(&src_skeleton, &tgt_skeleton, node_map);
+        }
         return Ok(());
     }
 
@@ -151,6 +169,48 @@ pub fn run_values(source_path: &str, target_path: &str) -> Result<(), Box<dyn st
     print_tvert_fit(&src, &tgt);
     println!();
     print_position(&src, &tgt);
+
+    if let Some(node_map) = &node_map {
+        println!();
+        let matched = print_node_map_report(&src_skeleton, &tgt_skeleton, node_map);
+        if matched.len() == 1 {
+            let (source_node, target_node) = matched[0];
+            if source_node.has_position
+                && source_node.has_orientation
+                && target_node.has_position
+                && target_node.has_orientation
+            {
+                println!("; Per-node adjustment to paste into the [s#] section:");
+                println!("node-match={}", node_map.pattern);
+                println!("node-substitute={}", node_map.substitute);
+                println!(
+                    "node-position=({:.7}, {:.7}, {:.7})",
+                    target_node.position[0], target_node.position[1], target_node.position[2]
+                );
+                println!(
+                    "node-orientation=({:.7}, {:.7}, {:.7}, {:.7})",
+                    target_node.orientation[0],
+                    target_node.orientation[1],
+                    target_node.orientation[2],
+                    target_node.orientation[3]
+                );
+            } else {
+                println!(
+                    "; NodeMap adjustment not emitted: target node has no position or orientation."
+                );
+            }
+        } else {
+            println!("; NodeMap adjustment not emitted: expected exactly one mapped node pair.");
+        }
+    }
+
+    if let Some((source_rig_path, target_rig_path)) = rig_reference {
+        let source_rig = read_skeleton(Path::new(source_rig_path))?;
+        let target_rig = read_skeleton(Path::new(target_rig_path))?;
+        println!();
+        println!("; Optional rig reference (informational only; does not alter the fit above):");
+        print_skeleton_report(&source_rig, &target_rig);
+    }
 
     Ok(())
 }
@@ -332,6 +392,8 @@ fn read_skeleton(path: &Path) -> Result<Skeleton, Box<dyn std::error::Error>> {
                         parent: String::new(),
                         position: [0.0; 3],
                         has_position: false,
+                        orientation: [0.0; 4],
+                        has_orientation: false,
                     });
                 }
             }
@@ -357,6 +419,34 @@ fn read_skeleton(path: &Path) -> Result<Skeleton, Box<dyn std::error::Error>> {
                     node.has_position = true;
                 }
             }
+            "orientation" => {
+                if let Some(node) = current.as_mut() {
+                    let mut values = [0.0; 4];
+                    for value in &mut values {
+                        let raw = parts.next().ok_or_else(|| {
+                            format!(
+                                "{}:{line_no}: orientation requires four numbers",
+                                path.display()
+                            )
+                        })?;
+                        *value = raw.parse::<f64>().map_err(|_| {
+                            format!(
+                                "{}:{line_no}: invalid orientation value '{raw}'",
+                                path.display()
+                            )
+                        })?;
+                        if !value.is_finite() {
+                            return Err(format!(
+                                "{}:{line_no}: orientation values must be finite",
+                                path.display()
+                            )
+                            .into());
+                        }
+                    }
+                    node.orientation = values;
+                    node.has_orientation = true;
+                }
+            }
             "endnode" => {
                 if let Some(node) = current.take() {
                     skeleton.nodes.push(node);
@@ -380,6 +470,110 @@ fn read_skeleton(path: &Path) -> Result<Skeleton, Box<dyn std::error::Error>> {
 
 fn node_key(node: &NodeOffset) -> (String, String) {
     (node.name.clone(), node.parent.clone())
+}
+
+fn read_node_map(path: &str) -> Result<NodeMap, Box<dyn std::error::Error>> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("cannot read node map '{path}': {error}"))?;
+    let mut in_section = false;
+    let mut found_section = false;
+    let mut pattern = None;
+    let mut substitute = None;
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            in_section = line[1..line.len() - 1].eq_ignore_ascii_case("NodeMap");
+            if in_section {
+                if found_section {
+                    return Err(format!("{path}: duplicate [NodeMap] section").into());
+                }
+                found_section = true;
+            }
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(format!("{path}:{}: expected key=value", index + 1).into());
+        };
+        let value = value.trim().to_ascii_lowercase();
+        if value.is_empty() {
+            return Err(format!("{path}:{}: value cannot be empty", index + 1).into());
+        }
+        let slot = match key.trim().to_ascii_lowercase().as_str() {
+            "match" => &mut pattern,
+            "substitute" => &mut substitute,
+            _ => return Err(format!("{path}:{}: unknown [NodeMap] key '{key}'", index + 1).into()),
+        };
+        if slot.replace(value).is_some() {
+            return Err(format!("{path}:{}: duplicate [NodeMap] key '{key}'", index + 1).into());
+        }
+    }
+    if !found_section {
+        return Err(format!("{path}: missing [NodeMap] section").into());
+    }
+    Ok(NodeMap {
+        pattern: pattern.ok_or_else(|| format!("{path}: [NodeMap] is missing match"))?,
+        substitute: substitute.ok_or_else(|| format!("{path}: [NodeMap] is missing substitute"))?,
+    })
+}
+
+/// Reports mapped node pairs separately so a name map cannot affect fit values.
+fn print_node_map_report<'a>(
+    source: &'a Skeleton,
+    target: &'a Skeleton,
+    node_map: &NodeMap,
+) -> Vec<(&'a NodeOffset, &'a NodeOffset)> {
+    let (source_nodes, _) = unique_nodes(source);
+    let (target_nodes, _) = unique_nodes(target);
+    println!(
+        "; NodeMap match={} substitute={}",
+        node_map.pattern, node_map.substitute
+    );
+    let mut matched = Vec::new();
+    let mut source_count = 0;
+    for source_node in source_nodes.values() {
+        if !wildcard_match(&node_map.pattern, &source_node.name) {
+            continue;
+        }
+        source_count += 1;
+        let target_name = build_substitute(&source_node.name, &node_map.substitute);
+        let key = (target_name.clone(), source_node.parent.clone());
+        if let Some(target_node) = target_nodes
+            .get(&key)
+            .filter(|target_node| target_node.kind == source_node.kind)
+        {
+            matched.push((*source_node, *target_node));
+        } else {
+            println!(
+                "; mapped source {} -> {}, but no target node with parent {} was found",
+                source_node.name, target_name, source_node.parent
+            );
+        }
+    }
+    matched.sort_by(|(a, _), (b, _)| (&a.parent, &a.name).cmp(&(&b.parent, &b.name)));
+    if source_count == 0 {
+        println!("; No source nodes matched the NodeMap pattern.");
+    }
+    for (source_node, target_node) in &matched {
+        println!(
+            "; mapped {} ({}) -> {} ({}) | parent={} | source position={:?} orientation={:?} | target position={:?} orientation={:?}",
+            source_node.name,
+            source_node.kind,
+            target_node.name,
+            target_node.kind,
+            source_node.parent,
+            source_node.has_position.then_some(source_node.position),
+            source_node.has_orientation.then_some(source_node.orientation),
+            target_node.has_position.then_some(target_node.position),
+            target_node.has_orientation.then_some(target_node.orientation)
+        );
+    }
+    matched
 }
 
 /// Collapse repeated skeleton node records. Several base models repeat the
