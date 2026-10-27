@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Skeleton-reference comparison in `--values`:** Skeleton-only inputs now report matched node offsets, segment-length ratios, supermodels, and animation scales instead of suggesting a global mesh transform. The report handles repeated dummy-tree records and permits the small `rootdummy` marker mesh found in some reference MDLs.
+
 ## [1.3.6] - 2026-10-22
 
 ### Added
