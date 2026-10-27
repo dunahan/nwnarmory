@@ -4,10 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.7] - 2026-10-27
+
 ### Added
-- **Skeleton-reference comparison in `--values`:** Skeleton-only inputs now report matched node offsets, segment-length ratios, supermodels, and animation scales instead of suggesting a global mesh transform. The report handles repeated dummy-tree records and permits the small `rootdummy` marker mesh found in some reference MDLs.
-- **Optional `--rig-reference` for `--values`:** A normal model fit can now include a comparison between source and target skeletons. The report is informational and leaves the generated transform values unchanged.
-- **Per-node skin adjustment from `--values`:** `--node-map` can emit node name, position, and orientation settings for a unique source/target node pair. Add `node-match`, `node-substitute`, and `node-position` together to rename the node and set its target position. `node-orientation` is optional: when omitted the source orientation is preserved; when supplied it replaces an existing source value or adds a missing orientation line.
+- **Skeleton-reference comparison:** `--values` now reports matched node offsets, segment-length ratios, supermodels, and animation scales for skeleton-only MDLs. `--rig-reference` adds this report to a normal model fit without changing its generated transform values.
+- **Per-node skin-node mapping:** `--node-map` reports a unique source/target node pair and emits INI-ready rename and target-position values. During transformation, the matching node and parent references are renamed and its local position is set to the target value.
+
+### Changed
+- **Optional node orientation override:** `node-match`, `node-substitute`, and `node-position` must be specified together; `node-orientation` is optional. Omitting it preserves any source orientation unchanged. Supplying it replaces an existing orientation or adds the line when the source node has none.
 
 ## [1.3.6] - 2026-10-22
 
