@@ -126,7 +126,38 @@ substitute=MARobe
 nwnarmory --values --node-map robe-nodes.ini pmh0_robe003.mdl pma0_robe003.mdl
 ```
 
-The report applies the existing case-insensitive `match`/`substitute` wildcards to source node names, then still requires the same parent and reports both nodes' local position and orientation. If exactly one pair is found, `--values` also prints `node-match`, `node-substitute`, `node-position`, and `node-orientation` values. Paste the node settings you need into the generated `[sN]` transform section. During a transformation run, nwnarmory renames that node and applies the target local position. `node-orientation` is optional: when present, it replaces the source orientation or adds an orientation line if the source node has none; when omitted, the source orientation line is copied unchanged (or remains absent if the source has no such line). The ordinary global fit values remain unchanged. `node-match`, `node-substitute`, and `node-position` must be specified together.
+The report applies the existing case-insensitive `match`/`substitute` wildcards to source node names, then still requires the same parent and reports both nodes' local position and orientation. If exactly one pair is found, `--values` also prints all four `node-*` values. The three keys `node-match`, `node-substitute`, and `node-position` are required together. `node-orientation` is an optional override: when present, it replaces the source orientation or adds an orientation line if the source node has none; when omitted, an existing source orientation is copied unchanged (and a missing one stays missing). The ordinary global fit values remain independent of this per-node adjustment.
+
+### Applying a per-node adjustment
+
+For example, to rename the source robe's `MHRobe` skin node to `MARobe` and place it at the target node position, add the three required keys to the same `[sN]` section as the model's ordinary transform values:
+
+```ini
+[Global]
+nTransforms=1
+
+[s0]
+match=pmh0_robe003
+substitute=pma0_robe003
+; Keep the scale/rotate/translate/position values you derived for this model here.
+node-match=mhrobe
+node-substitute=marobe
+node-position=(0.0063873, -0.0260310, 1.2146000)
+```
+
+There is deliberately no `node-orientation` line in this example, so the orientation from the source `MHRobe` node is carried through unchanged. Run the normal transformation command with the INI and your source and destination folders:
+
+```bash
+nwnarmory transforms.ini ./input ./output
+```
+
+If the target rig requires an orientation override, include the fourth key. Its four values replace an existing source orientation or create the line if the source node has none:
+
+```ini
+node-orientation=(-0.1577180, 0.1778200, -0.9713418, -0.5645170)
+```
+
+`--values --node-map` prints a suggested `node-orientation` along with the other keys when it finds a unique pair. Keep that line only when you want to use the suggested target orientation; delete it to preserve the source orientation. Review the generated global geometry values separately, since the per-node settings do not alter them.
 
 Example for a cloak:
 
