@@ -114,13 +114,19 @@ nwnarmory --values --rig-reference pmh0.mdl pma0.mdl pmh0_robe003.mdl pma0_robe0
 
 The rig report is informational and does not change the generated transform values. Its comment lines can remain in the output copied to `transforms.ini`.
 
-To inspect an explicitly renamed node pair without changing the fit, pass a node-map INI:
+To inspect several explicitly renamed node pairs without changing the fit, pass a node-map INI. Each `[NodeMapN]` section is one mapping; `match` and `substitute` support the same case-insensitive `*` and `?` wildcards as transform rules:
 
 ```ini
-[NodeMap]
+[NodeMap0]
 match=MHRobe
 substitute=MARobe
+
+[NodeMap1]
+match=MHRobe
+substitute=MDRobe
 ```
+
+The repository includes [node-map.example.ini](node-map.example.ini) with mappings for the common robe skin names across races. The report checks each mapping against the source and target skeletons. A node-map file is for analysis with `--values`; to apply per-node changes in a batch transform, put the corresponding `node-match`, `node-substitute`, and position values in the relevant transform section(s).
 
 ```bash
 nwnarmory --values --node-map robe-nodes.ini pmh0_robe003.mdl pma0_robe003.mdl
