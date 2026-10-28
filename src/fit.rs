@@ -48,7 +48,8 @@ struct NodeOffset {
     has_orientation: bool,
 }
 
-struct NodeMap {
+struct NodeMapRule {
+    section: String,
     pattern: String,
     substitute: String,
 }
@@ -137,14 +138,16 @@ pub fn run_values(
     let tgt = read_geometry(Path::new(target_path))?;
     let src_skeleton = read_skeleton(Path::new(source_path))?;
     let tgt_skeleton = read_skeleton(Path::new(target_path))?;
-    let node_map = node_map_path.map(read_node_map).transpose()?;
+    let node_maps = node_map_path.map(read_node_maps).transpose()?;
 
     // A body skeleton has useful per-bone measurements, but no geometry from
     // which to infer a single transforms.ini scale/rotate/translate.
     if is_skeleton_reference(&src) && is_skeleton_reference(&tgt) {
         print_skeleton_report(&src_skeleton, &tgt_skeleton);
-        if let Some(node_map) = &node_map {
-            print_node_map_report(&src_skeleton, &tgt_skeleton, node_map);
+        if let Some(node_maps) = &node_maps {
+            for node_map in node_maps {
+                print_node_map_report(&src_skeleton, &tgt_skeleton, node_map);
+            }
         }
         return Ok(());
     }
@@ -170,37 +173,41 @@ pub fn run_values(
     println!();
     print_position(&src, &tgt);
 
-    if let Some(node_map) = &node_map {
+    if let Some(node_maps) = &node_maps {
         println!();
-        let matched = print_node_map_report(&src_skeleton, &tgt_skeleton, node_map);
-        if matched.len() == 1 {
-            let (source_node, target_node) = matched[0];
-            if source_node.has_position
-                && source_node.has_orientation
-                && target_node.has_position
-                && target_node.has_orientation
-            {
-                println!("; Per-node adjustment to paste into the [s#] section:");
-                println!("node-match={}", node_map.pattern);
-                println!("node-substitute={}", node_map.substitute);
-                println!(
-                    "node-position=({:.7}, {:.7}, {:.7})",
-                    target_node.position[0], target_node.position[1], target_node.position[2]
-                );
-                println!(
-                    "node-orientation=({:.7}, {:.7}, {:.7}, {:.7})",
-                    target_node.orientation[0],
-                    target_node.orientation[1],
-                    target_node.orientation[2],
-                    target_node.orientation[3]
-                );
-            } else {
-                println!(
+        for node_map in node_maps {
+            let matched = print_node_map_report(&src_skeleton, &tgt_skeleton, node_map);
+            if matched.len() == 1 {
+                let (source_node, target_node) = matched[0];
+                if source_node.has_position
+                    && source_node.has_orientation
+                    && target_node.has_position
+                    && target_node.has_orientation
+                {
+                    println!("; Per-node adjustment to paste into the [s#] section:");
+                    println!("node-match={}", node_map.pattern);
+                    println!("node-substitute={}", node_map.substitute);
+                    println!(
+                        "node-position=({:.7}, {:.7}, {:.7})",
+                        target_node.position[0], target_node.position[1], target_node.position[2]
+                    );
+                    println!(
+                        "node-orientation=({:.7}, {:.7}, {:.7}, {:.7})",
+                        target_node.orientation[0],
+                        target_node.orientation[1],
+                        target_node.orientation[2],
+                        target_node.orientation[3]
+                    );
+                } else {
+                    println!(
                     "; NodeMap adjustment not emitted: target node has no position or orientation."
                 );
+                }
+            } else {
+                println!(
+                    "; NodeMap adjustment not emitted: expected exactly one mapped node pair."
+                );
             }
-        } else {
-            println!("; NodeMap adjustment not emitted: expected exactly one mapped node pair.");
         }
     }
 
@@ -472,31 +479,34 @@ fn node_key(node: &NodeOffset) -> (String, String) {
     (node.name.clone(), node.parent.clone())
 }
 
-fn read_node_map(path: &str) -> Result<NodeMap, Box<dyn std::error::Error>> {
+fn read_node_maps(path: &str) -> Result<Vec<NodeMapRule>, Box<dyn std::error::Error>> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("cannot read node map '{path}': {error}"))?;
-    let mut in_section = false;
-    let mut found_section = false;
-    let mut pattern = None;
-    let mut substitute = None;
+    let mut sections: Vec<(String, Option<String>, Option<String>)> = Vec::new();
+    let mut current_section = None;
     for (index, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
             continue;
         }
         if line.starts_with('[') && line.ends_with(']') {
-            in_section = line[1..line.len() - 1].eq_ignore_ascii_case("NodeMap");
-            if in_section {
-                if found_section {
-                    return Err(format!("{path}: duplicate [NodeMap] section").into());
-                }
-                found_section = true;
+            let name = line[1..line.len() - 1].trim();
+            if name.eq_ignore_ascii_case("NodeMap") {
+                return Err(
+                    format!("{path}: use named sections such as [NodeMap0], [NodeMap1]").into(),
+                );
+            }
+            if name.to_ascii_lowercase().starts_with("nodemap") {
+                sections.push((name.to_string(), None, None));
+                current_section = Some(sections.len() - 1);
+            } else {
+                current_section = None;
             }
             continue;
         }
-        if !in_section {
+        let Some(section_index) = current_section else {
             continue;
-        }
+        };
         let Some((key, value)) = line.split_once('=') else {
             return Err(format!("{path}:{}: expected key=value", index + 1).into());
         };
@@ -504,35 +514,43 @@ fn read_node_map(path: &str) -> Result<NodeMap, Box<dyn std::error::Error>> {
         if value.is_empty() {
             return Err(format!("{path}:{}: value cannot be empty", index + 1).into());
         }
+        let current = &mut sections[section_index];
         let slot = match key.trim().to_ascii_lowercase().as_str() {
-            "match" => &mut pattern,
-            "substitute" => &mut substitute,
+            "match" => &mut current.1,
+            "substitute" => &mut current.2,
             _ => return Err(format!("{path}:{}: unknown [NodeMap] key '{key}'", index + 1).into()),
         };
         if slot.replace(value).is_some() {
             return Err(format!("{path}:{}: duplicate [NodeMap] key '{key}'", index + 1).into());
         }
     }
-    if !found_section {
-        return Err(format!("{path}: missing [NodeMap] section").into());
+    if sections.is_empty() {
+        return Err(format!("{path}: missing [NodeMapN] section").into());
     }
-    Ok(NodeMap {
-        pattern: pattern.ok_or_else(|| format!("{path}: [NodeMap] is missing match"))?,
-        substitute: substitute.ok_or_else(|| format!("{path}: [NodeMap] is missing substitute"))?,
-    })
+    sections
+        .into_iter()
+        .map(|(section, pattern, substitute)| {
+            Ok(NodeMapRule {
+                section: section.clone(),
+                pattern: pattern.ok_or_else(|| format!("{path}: [{section}] is missing match"))?,
+                substitute: substitute
+                    .ok_or_else(|| format!("{path}: [{section}] is missing substitute"))?,
+            })
+        })
+        .collect()
 }
 
 /// Reports mapped node pairs separately so a name map cannot affect fit values.
 fn print_node_map_report<'a>(
     source: &'a Skeleton,
     target: &'a Skeleton,
-    node_map: &NodeMap,
+    node_map: &NodeMapRule,
 ) -> Vec<(&'a NodeOffset, &'a NodeOffset)> {
     let (source_nodes, _) = unique_nodes(source);
     let (target_nodes, _) = unique_nodes(target);
     println!(
-        "; NodeMap match={} substitute={}",
-        node_map.pattern, node_map.substitute
+        "; [{}] match={} substitute={}",
+        node_map.section, node_map.pattern, node_map.substitute
     );
     let mut matched = Vec::new();
     let mut source_count = 0;

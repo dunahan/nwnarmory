@@ -4,11 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [1.3.7] - 2026-10-27
+## [1.3.8] - 2026-10-28
 
 ### Added
 - **Skeleton-reference comparison:** `--values` now reports matched node offsets, segment-length ratios, supermodels, and animation scales for skeleton-only MDLs. `--rig-reference` adds this report to a normal model fit without changing its generated transform values.
 - **Per-node skin-node mapping:** `--node-map` reports a unique source/target node pair and emits INI-ready rename and target-position values. During transformation, the matching node and parent references are renamed and its local position is set to the target value.
+- **Multiple node mappings:** `--node-map` accepts multiple `[NodeMapN]` sections in one file, so a source skin node can be checked against several race-specific target names. Added `node-map.example.ini` with robe skin-node mappings.
+- **Regression coverage:** CLI tests exercise multiple node mappings and malformed entries, skeleton segment-length reports, mapped node/parent renaming, position updates, and both orientation override and source-orientation preservation.
 
 ### Changed
 - **Optional node orientation override:** `node-match`, `node-substitute`, and `node-position` must be specified together; `node-orientation` is optional. Omitting it preserves any source orientation unchanged. Supplying it replaces an existing orientation or adds the line when the source node has none.

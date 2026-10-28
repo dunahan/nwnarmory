@@ -76,6 +76,17 @@ fn run_values(source: &Path, target: &Path) -> std::process::Output {
         .expect("run nwnarmory --values")
 }
 
+fn run_values_with_node_map(node_map: &Path, source: &Path, target: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_nwnarmory"))
+        .arg("--values")
+        .arg("--node-map")
+        .arg(node_map)
+        .arg(source)
+        .arg(target)
+        .output()
+        .expect("run nwnarmory --values --node-map")
+}
+
 #[test]
 fn successful_transform_writes_expected_model_and_preserves_bitmap() {
     let temp = TempDir::new("successful-transform");
@@ -415,6 +426,188 @@ fn values_flag_prints_ini_ready_fit_for_corresponding_models() {
         "unexpected stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn node_map_reports_multiple_mappings_and_missing_targets() {
+    let temp = TempDir::new("node-map-multiple");
+    let source = temp.path().join("pmh0_robe001.mdl");
+    let target = temp.path().join("pma0_robe001.mdl");
+    let node_map = temp.path().join("node-map.ini");
+    write(
+        &source,
+        "newmodel pmh0_robe001\n\
+         node dummy pmh0_robe001\n\
+         endnode\n\
+         node dummy MHRobe\n\
+         parent pmh0_robe001\n\
+         position 0 0 1\n\
+         endnode\n\
+         donemodel pmh0_robe001\n",
+    );
+    write(
+        &target,
+        "newmodel pma0_robe001\n\
+         node dummy pma0_robe001\n\
+         endnode\n\
+         node dummy MARobe\n\
+         parent pma0_robe001\n\
+         position 0 0 2\n\
+         endnode\n\
+         node dummy MDRobe\n\
+         parent pma0_robe001\n\
+         position 0 0 3\n\
+         endnode\n\
+         donemodel pma0_robe001\n",
+    );
+    write(
+        &node_map,
+        "[NodeMap0]\nmatch=MHRobe\nsubstitute=MARobe\n\
+         [NodeMap1]\nmatch=MHRobe\nsubstitute=MDRobe\n\
+         [NodeMap2]\nmatch=MHRobe\nsubstitute=MERobe\n",
+    );
+
+    let output = run_values_with_node_map(&node_map, &source, &target);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[NodeMap0] match=mhrobe substitute=marobe"));
+    assert!(stdout.contains("[NodeMap1] match=mhrobe substitute=mdrobe"));
+    assert!(stdout.contains("mapped mhrobe (dummy) -> marobe (dummy)"));
+    assert!(stdout.contains("mapped mhrobe (dummy) -> mdrobe (dummy)"));
+    assert!(stdout.contains("mapped source mhrobe -> merobe"));
+}
+
+#[test]
+fn node_map_rejects_missing_and_duplicate_entries() {
+    let temp = TempDir::new("node-map-invalid");
+    let source = temp.path().join("source.mdl");
+    let target = temp.path().join("target.mdl");
+    let node_map = temp.path().join("node-map.ini");
+    write(
+        &source,
+        "newmodel source\nnode dummy source\nendnode\ndonemodel source\n",
+    );
+    write(
+        &target,
+        "newmodel target\nnode dummy target\nendnode\ndonemodel target\n",
+    );
+
+    write(&node_map, "[NodeMap0]\nmatch=source\n");
+    let output = run_values_with_node_map(&node_map, &source, &target);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("[NodeMap0] is missing substitute"));
+
+    write(
+        &node_map,
+        "[NodeMap0]\nmatch=source\nmatch=other\nsubstitute=target\n",
+    );
+    let output = run_values_with_node_map(&node_map, &source, &target);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("duplicate [NodeMap] key 'match'"));
+}
+
+#[test]
+fn skeleton_reference_values_report_segment_length_ratio() {
+    let temp = TempDir::new("skeleton-reference");
+    let source = temp.path().join("pmh0.mdl");
+    let target = temp.path().join("pmd0.mdl");
+    write(
+        &source,
+        "newmodel pmh0\nsetsupermodel pmh0 NULL\nsetanimationscale 1.0\n\
+         node dummy pmh0\nendnode\n\
+         node dummy torso\nparent pmh0\nposition 0 0 1\nendnode\n\
+         donemodel pmh0\n",
+    );
+    write(
+        &target,
+        "newmodel pmd0\nsetsupermodel pmd0 NULL\nsetanimationscale 0.9\n\
+         node dummy pmd0\nendnode\n\
+         node dummy torso\nparent pmd0\nposition 0 0 2\nendnode\n\
+         donemodel pmd0\n",
+    );
+
+    let output = run_values(&source, &target);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Skeleton comparison: pmh0 -> pmd0"));
+    assert!(stdout.contains("1.000000 | 2.000000 | 2.0000"));
+    assert!(stdout.contains("animation scale=1.0000"));
+    assert!(stdout.contains("animation scale=0.9000"));
+}
+
+#[test]
+fn node_transform_renames_node_and_parent_and_sets_position_and_orientation() {
+    let temp = TempDir::new("node-transform");
+    let ini_path = temp.path().join("rules.ini");
+    let source = temp.path().join("source.mdl");
+    let destination = temp.path().join("out");
+    let target = destination.join("target.mdl");
+    write(
+        &ini_path,
+        "[Global]\nnTransforms=1\n\n[s0]\nmatch=source\nsubstitute=target\n\
+         node-match=mhrobe\nnode-substitute=mdrobe\n\
+         node-position=(4, 5, 6)\nnode-orientation=(0, 0, 0, 1)\n",
+    );
+    write(
+        &source,
+        "newmodel source\n\
+         node dummy source\nendnode\n\
+         node dummy MHRobe\n\
+         parent source\n\
+         position 1 2 3\nendnode\n\
+         donemodel source\n",
+    );
+
+    let output = run(&ini_path, &source, &destination);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let generated = fs::read_to_string(target).expect("read transformed model");
+    assert!(generated.contains("node dummy mdrobe\n"));
+    assert!(generated.contains("parent target\n"));
+    assert!(generated.contains("position 4.0000000 5.0000000 6.0000000\n"));
+    assert!(generated.contains("orientation 0.0000000 0.0000000 0.0000000 1.0000000\n"));
+}
+
+#[test]
+fn node_transform_preserves_source_orientation_when_no_override_is_configured() {
+    let temp = TempDir::new("node-transform-keep-orientation");
+    let ini_path = temp.path().join("rules.ini");
+    let source = temp.path().join("source.mdl");
+    let destination = temp.path().join("out");
+    let target = destination.join("target.mdl");
+    write(
+        &ini_path,
+        "[Global]\nnTransforms=1\n\n[s0]\nmatch=source\nsubstitute=target\n\
+         node-match=mhrobe\nnode-substitute=mdrobe\nnode-position=(4, 5, 6)\n",
+    );
+    write(
+        &source,
+        "newmodel source\n\
+         node dummy source\nendnode\n\
+         node dummy MHRobe\nparent source\nposition 1 2 3\n\
+         orientation 0.1 0.2 0.3 0.9\nendnode\n\
+         donemodel source\n",
+    );
+
+    let output = run(&ini_path, &source, &destination);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let generated = fs::read_to_string(target).expect("read transformed model");
+    assert!(generated.contains("orientation 0.1 0.2 0.3 0.9\n"));
 }
 
 #[test]
